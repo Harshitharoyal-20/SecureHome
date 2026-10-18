@@ -1,0 +1,68 @@
+
+HELP.md
+
+# Java and Maven
+**/target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# Spring Tool Suite
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# NetBeans
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+**/build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# VS Code
+.vscode/
+
+# Node.js and Vite
+**/node_modules/
+**/dist/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+**/application-local.properties
+
+# Logs
+*.log
+
+# Database backups
+*.sql
+*.dump
+
+# Operating system
+.DS_Store
+Thumbs.db
+# Nested environment files
+**/.env
+**/.env.*
+!**/.env.example
+/home-security/src/main/resources/application.properties
+# Additional generated files
+**/node_modules/
+**/target/
+**/dist/
+**/build/
+/src/main/resources/application.properties
