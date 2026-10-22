@@ -13,7 +13,10 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/lockers")
-@CrossOrigin(origins = "http://localhost:5173")
+@CrossOrigin(origins = {
+        "http://localhost:5173",
+       "https://secure-home-kappa.vercel.app"
+})
 public class SecureAssetController {
 
     private final SecureAssetRepository repository;
