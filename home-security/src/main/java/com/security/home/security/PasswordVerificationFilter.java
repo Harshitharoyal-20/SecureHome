@@ -16,6 +16,9 @@ public class PasswordVerificationFilter extends OncePerRequestFilter {
     public static final String VERIFIED_ATTRIBUTE =
             "SECUREHOME_PASSWORD_VERIFIED";
 
+    public static final String OAUTH_AUTHENTICATED_ATTRIBUTE =
+            "SECUREHOME_OAUTH_AUTHENTICATED";
+
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
 
@@ -43,11 +46,16 @@ public class PasswordVerificationFilter extends OncePerRequestFilter {
 
         HttpSession session = request.getSession(false);
 
-        boolean verified = session != null
+        boolean passwordVerified = session != null
                 && Boolean.TRUE.equals(
                         session.getAttribute(VERIFIED_ATTRIBUTE));
 
-        if (!verified) {
+        boolean oauthAuthenticated = session != null
+                && Boolean.TRUE.equals(
+                        session.getAttribute(
+                                OAUTH_AUTHENTICATED_ATTRIBUTE));
+
+        if (!passwordVerified && !oauthAuthenticated) {
             response.setStatus(
                     HttpServletResponse.SC_FORBIDDEN);
             response.setContentType("application/json");

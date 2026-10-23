@@ -6,6 +6,8 @@ import java.util.List;
 import com.security.home.CustomOAuth2UserService;
 import com.security.home.security.PasswordVerificationFilter;
 
+import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,9 +21,10 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.provisioning.JdbcUserDetailsManager;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -88,6 +91,20 @@ public class SecurityConfig {
     }
 
     @Bean
+    public AuthenticationSuccessHandler oauthSuccessHandler() {
+        return (request, response, authentication) -> {
+            request.getSession(true).setAttribute(
+                    PasswordVerificationFilter.OAUTH_AUTHENTICATED_ATTRIBUTE,
+                    true
+            );
+
+            response.sendRedirect(
+                    "https://secure-home-kappa.vercel.app/?oauth=success"
+            );
+        };
+    }
+
+    @Bean
     public CorsConfigurationSource corsConfigurationSource() {
 
         CorsConfiguration configuration = new CorsConfiguration();
@@ -109,7 +126,6 @@ public class SecurityConfig {
                 ));
 
         configuration.setAllowedHeaders(List.of("*"));
-
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source =
@@ -125,7 +141,8 @@ public class SecurityConfig {
             HttpSecurity http,
             CustomOAuth2UserService customOAuth2UserService,
             PasswordVerificationFilter passwordVerificationFilter,
-            SecurityContextRepository securityContextRepository)
+            SecurityContextRepository securityContextRepository,
+            AuthenticationSuccessHandler oauthSuccessHandler)
             throws Exception {
 
         http
@@ -196,9 +213,7 @@ public class SecurityConfig {
                 .userInfoEndpoint(userInfo ->
                         userInfo.userService(
                                 customOAuth2UserService))
-                .defaultSuccessUrl(
-                        "https://secure-home-kappa.vercel.app/?oauth=success",
-                        true)
+                .successHandler(oauthSuccessHandler)
             );
 
         return http.build();
