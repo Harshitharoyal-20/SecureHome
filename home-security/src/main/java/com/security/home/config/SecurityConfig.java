@@ -84,7 +84,6 @@ public class SecurityConfig {
                 new FilterRegistrationBean<>(filter);
 
         registration.setEnabled(false);
-
         return registration;
     }
 
@@ -95,16 +94,13 @@ public class SecurityConfig {
 
             session.setAttribute(
                     PasswordVerificationFilter.OAUTH_AUTHENTICATED_ATTRIBUTE,
-                    true
-            );
+                    true);
 
             session.removeAttribute(
-                    PasswordVerificationFilter.VERIFIED_ATTRIBUTE
-            );
+                    PasswordVerificationFilter.VERIFIED_ATTRIBUTE);
 
             response.sendRedirect(
-                    "https://secure-home-kappa.vercel.app/?oauth=success"
-            );
+                    "https://secure-home-kappa.vercel.app/?oauth=success");
         };
     }
 
@@ -116,18 +112,12 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(
                 List.of(
                         "https://secure-home-kappa.vercel.app",
-                        "http://localhost:5173"
-                ));
+                        "http://localhost:5173"));
 
         configuration.setAllowedMethods(
                 List.of(
-                        "GET",
-                        "POST",
-                        "PUT",
-                        "PATCH",
-                        "DELETE",
-                        "OPTIONS"
-                ));
+                        "GET", "POST", "PUT", "PATCH",
+                        "DELETE", "OPTIONS"));
 
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
@@ -136,7 +126,6 @@ public class SecurityConfig {
                 new UrlBasedCorsConfigurationSource();
 
         source.registerCorsConfiguration("/**", configuration);
-
         return source;
     }
 
@@ -165,18 +154,12 @@ public class SecurityConfig {
                     AuthorizationFilter.class)
 
             .authorizeHttpRequests(auth -> auth
-
-                .requestMatchers(
-                        HttpMethod.OPTIONS,
-                        "/**")
+                .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
 
                 .requestMatchers(
-                        "/",
-                        "/error",
-                        "/oauth2/**",
-                        "/login/**",
-                        "/api/auth/login")
+                        "/", "/error", "/oauth2/**",
+                        "/login/**", "/api/auth/login")
                 .permitAll()
 
                 .requestMatchers(
@@ -193,30 +176,22 @@ public class SecurityConfig {
 
                 .requestMatchers("/api/access-check")
                 .hasAnyRole(
-                        "ADMIN",
-                        "FAMILY_MEMBER",
-                        "SECURITY_STAFF")
+                        "ADMIN", "FAMILY_MEMBER", "SECURITY_STAFF")
 
                 .requestMatchers(
-                        "/api/lockers",
-                        "/api/lockers/**",
-                        "/api/access-events",
-                        "/api/access-events/**",
-                        "/api/security-alerts",
-                        "/api/security-alerts/**")
+                        "/api/lockers", "/api/lockers/**",
+                        "/api/access-events", "/api/access-events/**",
+                        "/api/security-alerts", "/api/security-alerts/**")
                 .hasAnyRole(
-                        "ADMIN",
-                        "FAMILY_MEMBER",
-                        "SECURITY_STAFF",
-                        "GUEST")
+                        "ADMIN", "FAMILY_MEMBER",
+                        "SECURITY_STAFF", "GUEST")
 
                 .anyRequest().authenticated()
             )
 
             .oauth2Login(oauth -> oauth
                 .userInfoEndpoint(userInfo ->
-                        userInfo.userService(
-                                customOAuth2UserService))
+                    userInfo.userService(customOAuth2UserService))
                 .successHandler(oauthSuccessHandler)
             );
 
