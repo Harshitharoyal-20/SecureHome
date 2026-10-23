@@ -18,6 +18,9 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.provisioning.JdbcUserDetailsManager;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.DefaultOAuth2AuthorizationRequestResolver;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestResolver;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
@@ -31,12 +34,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
 
     @Bean
-    public UserDetailsService userDetailsService(
-            JdbcTemplate jdbcTemplate) {
-
+    public UserDetailsService userDetailsService(JdbcTemplate jdbcTemplate) {
         JdbcUserDetailsManager manager =
-                new JdbcUserDetailsManager(
-                        jdbcTemplate.getDataSource());
+                new JdbcUserDetailsManager(jdbcTemplate.getDataSource());
 
         manager.setUsersByUsernameQuery(
                 "SELECT email, password_hash, " +
@@ -88,6 +88,23 @@ public class SecurityConfig {
     }
 
     @Bean
+    public OAuth2AuthorizationRequestResolver authorizationRequestResolver(
+            ClientRegistrationRepository clientRegistrationRepository) {
+
+        DefaultOAuth2AuthorizationRequestResolver resolver =
+                new DefaultOAuth2AuthorizationRequestResolver(
+                        clientRegistrationRepository,
+                        "/oauth2/authorization");
+
+        resolver.setAuthorizationRequestCustomizer(
+                builder -> builder.additionalParameters(
+                        parameters -> parameters.put(
+                                "prompt", "select_account")));
+
+        return resolver;
+    }
+
+    @Bean
     public AuthenticationSuccessHandler oauthSuccessHandler() {
         return (request, response, authentication) -> {
             var session = request.getSession(true);
@@ -106,7 +123,6 @@ public class SecurityConfig {
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
-
         CorsConfiguration configuration = new CorsConfiguration();
 
         configuration.setAllowedOrigins(
@@ -135,7 +151,8 @@ public class SecurityConfig {
             CustomOAuth2UserService customOAuth2UserService,
             PasswordVerificationFilter passwordVerificationFilter,
             SecurityContextRepository securityContextRepository,
-            AuthenticationSuccessHandler oauthSuccessHandler)
+            AuthenticationSuccessHandler oauthSuccessHandler,
+            OAuth2AuthorizationRequestResolver authorizationRequestResolver)
             throws Exception {
 
         http
@@ -190,8 +207,11 @@ public class SecurityConfig {
             )
 
             .oauth2Login(oauth -> oauth
+                .authorizationEndpoint(endpoint ->
+                        endpoint.authorizationRequestResolver(
+                                authorizationRequestResolver))
                 .userInfoEndpoint(userInfo ->
-                    userInfo.userService(customOAuth2UserService))
+                        userInfo.userService(customOAuth2UserService))
                 .successHandler(oauthSuccessHandler)
             );
 
