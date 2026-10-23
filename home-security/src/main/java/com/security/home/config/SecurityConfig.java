@@ -92,7 +92,10 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
 
         configuration.setAllowedOrigins(
-                List.of("http://localhost:5173"));
+                List.of(
+                        "https://secure-home-kappa.vercel.app",
+                        "http://localhost:5173"
+                ));
 
         configuration.setAllowedMethods(
                 List.of(
@@ -101,13 +104,10 @@ public class SecurityConfig {
                         "PUT",
                         "PATCH",
                         "DELETE",
-                        "OPTIONS"));
+                        "OPTIONS"
+                ));
 
-        configuration.setAllowedHeaders(
-                List.of(
-                        "Authorization",
-                        "Content-Type",
-                        "Accept"));
+        configuration.setAllowedHeaders(List.of("*"));
 
         configuration.setAllowCredentials(true);
 
@@ -196,7 +196,7 @@ public class SecurityConfig {
                         userInfo.userService(
                                 customOAuth2UserService))
                 .defaultSuccessUrl(
-                        "http://localhost:5173/?oauth=success",
+                        "https://secure-home-kappa.vercel.app/?oauth=success",
                         true)
             );
 
