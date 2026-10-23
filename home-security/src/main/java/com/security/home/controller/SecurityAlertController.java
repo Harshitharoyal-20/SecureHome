@@ -7,110 +7,122 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.user.OAuth2User;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/security-alerts")
+@CrossOrigin(origins = {
+    "http://localhost:5173",
+    "https://secure-home-kappa.vercel.app"
+})
 public class SecurityAlertController {
 
-    private static final List<String> PRIVILEGED_EMAILS = List.of(
-            "harshitha0064@gmail.com",
-            "pranawii0713@gmail.com"
+    private static final Set<String> PRIVILEGED_EMAILS = Set.of(
+        "sivakumar6413@gmail.com",
+        "pranawii0713@gmail.com",
+        "harshitha0064@gmail.com"
     );
 
     private final SecurityAlertRepository repository;
-    private final JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbc;
 
     public SecurityAlertController(
             SecurityAlertRepository repository,
-            JdbcTemplate jdbcTemplate) {
+            JdbcTemplate jdbc) {
         this.repository = repository;
-        this.jdbcTemplate = jdbcTemplate;
+        this.jdbc = jdbc;
     }
 
     @GetMapping
     public List<SecurityAlert> getSecurityAlerts(
             Authentication authentication) {
 
-        if (authentication == null || !authentication.isAuthenticated()) {
+        if (authentication == null
+                || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getPrincipal())) {
             throw new ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED, "Please log in");
+                HttpStatus.UNAUTHORIZED,
+                "Please log in"
+            );
         }
 
         List<Map<String, Object>> users;
 
         if (authentication.getPrincipal() instanceof OAuth2User oauth) {
-            Object id = oauth.getAttributes().get("id");
+            Object providerId = oauth.getAttribute("id");
 
-            if (id == null) {
+            if (providerId == null) {
                 throw new ResponseStatusException(
-                        HttpStatus.FORBIDDEN,
-                        "GitHub account ID is missing");
+                    HttpStatus.FORBIDDEN,
+                    "GitHub account ID is missing"
+                );
             }
 
-            users = jdbcTemplate.queryForList(
-                    "SELECT u.user_id, u.email, r.role_name " +
-                    "FROM oauth_account_links o " +
-                    "JOIN users u ON u.user_id = o.user_id " +
-                    "JOIN roles r ON r.role_id = u.role_id " +
-                    "WHERE o.provider = ? " +
-                    "AND o.provider_user_id = ? " +
-                    "AND u.status = 'ACTIVE'",
-                    "github", id.toString());
+            users = jdbc.queryForList(
+                "SELECT u.user_id, u.email, r.role_name " +
+                "FROM oauth_account_links o " +
+                "JOIN users u ON u.user_id = o.user_id " +
+                "JOIN roles r ON r.role_id = u.role_id " +
+                "WHERE LOWER(o.provider) = 'github' " +
+                "AND o.provider_user_id = ? " +
+                "AND u.status = 'ACTIVE' " +
+                "LIMIT 1",
+                String.valueOf(providerId)
+            );
         } else {
-            users = jdbcTemplate.queryForList(
-                    "SELECT u.user_id, u.email, r.role_name " +
-                    "FROM users u " +
-                    "JOIN roles r ON r.role_id = u.role_id " +
-                    "WHERE LOWER(u.email) = LOWER(?) " +
-                    "AND u.status = 'ACTIVE'",
-                    authentication.getName());
+            users = jdbc.queryForList(
+                "SELECT u.user_id, u.email, r.role_name " +
+                "FROM users u " +
+                "JOIN roles r ON r.role_id = u.role_id " +
+                "WHERE LOWER(u.email) = LOWER(?) " +
+                "AND u.status = 'ACTIVE' " +
+                "LIMIT 1",
+                authentication.getName()
+            );
         }
 
         if (users.isEmpty()) {
             throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN,
-                    "No active application user is linked to this login");
+                HttpStatus.FORBIDDEN,
+                "No active application user is linked to this login"
+            );
         }
 
         Map<String, Object> user = users.get(0);
 
         int userId = ((Number) user.get("user_id")).intValue();
-        String role = String.valueOf(user.get("role_name"));
-        String userEmail = String.valueOf(user.get("email"))
-                .trim().toLowerCase();
+        String email = user.get("email") == null
+            ? ""
+            : String.valueOf(user.get("email")).trim().toLowerCase();
 
-        boolean privilegedAccount = PRIVILEGED_EMAILS.contains(userEmail);
+        String role = user.get("role_name") == null
+            ? ""
+            : String.valueOf(user.get("role_name"));
 
-        if ("ADMIN".equalsIgnoreCase(role) || privilegedAccount) {
+        boolean isAdmin =
+            "ADMIN".equalsIgnoreCase(role)
+            || PRIVILEGED_EMAILS.contains(email);
+
+        if (isAdmin) {
             return repository.findAllByOrderByCreatedAtDesc();
         }
 
-        if ("FAMILY_MEMBER".equalsIgnoreCase(role)
-                || "SECURITY_STAFF".equalsIgnoreCase(role)
-                || "GUEST".equalsIgnoreCase(role)) {
+        List<Integer> alertIds = jdbc.query(
+            "SELECT alert_id FROM security_alerts " +
+            "WHERE recipient_user_id = ? " +
+            "ORDER BY created_at DESC",
+            (rs, rowNum) -> rs.getInt("alert_id"),
+            userId
+        );
 
-            List<Integer> alertIds = jdbcTemplate.query(
-                    "SELECT alert_id FROM security_alerts " +
-                    "WHERE recipient_user_id = ? " +
-                    "ORDER BY created_at DESC",
-                    (rs, rowNum) -> rs.getInt("alert_id"),
-                    userId);
-
-            return alertIds.stream()
-                    .map(id -> repository.findById(id).orElse(null))
-                    .filter(alert -> alert != null)
-                    .toList();
-        }
-
-        throw new ResponseStatusException(
-                HttpStatus.FORBIDDEN,
-                "You cannot view security alerts");
+        return alertIds.stream()
+            .map(id -> repository.findById(id).orElse(null))
+            .filter(alert -> alert != null)
+            .toList();
     }
 }

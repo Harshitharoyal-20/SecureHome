@@ -5,11 +5,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -17,12 +16,13 @@ import java.util.Set;
 @Service
 public class AccessDecisionService {
 
-    private final JdbcTemplate jdbc;
-
     private static final Set<String> PRIVILEGED_EMAILS = Set.of(
-        "harshitha0064@gmail.com",
-        "pranawii0713@gmail.com"
+        "sivakumar6413@gmail.com",
+        "pranawii0713@gmail.com",
+        "harshitha0064@gmail.com"
     );
+
+    private final JdbcTemplate jdbc;
 
     public AccessDecisionService(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
@@ -33,7 +33,8 @@ public class AccessDecisionService {
 
         String decision = "DENIED";
         String reason;
-        Long policyId = null;
+        LocalDateTime now = LocalDateTime.now();
+        Long eventId = null;
 
         if (userId == null || assetId == null) {
             return Map.of(
@@ -54,112 +55,84 @@ public class AccessDecisionService {
             assetId
         );
 
-        String email = null;
+        String email = "";
 
-        if (!users.isEmpty()) {
-            Object emailValue = users.get(0).get("email");
-            if (emailValue != null) {
-                email = String.valueOf(emailValue).toLowerCase().trim();
-            }
+        if (!users.isEmpty() && users.get(0).get("email") != null) {
+            email = String.valueOf(users.get(0).get("email"))
+                .trim()
+                .toLowerCase();
         }
 
-        boolean privileged = email != null
-            && PRIVILEGED_EMAILS.contains(email);
+        boolean isAdmin = PRIVILEGED_EMAILS.contains(email);
 
         if (users.isEmpty()) {
             reason = "User is inactive or does not exist";
         } else if (assets.isEmpty()) {
             reason = "Locker is inactive or does not exist";
-        } else if (privileged) {
+        } else if (isAdmin) {
             decision = "ALLOWED";
-            reason = "Approved account access granted";
+            reason = "Approved administrator access granted";
         } else {
-            LocalDateTime now = LocalDateTime.now();
-            LocalTime currentTime = now.toLocalTime();
-
-            List<Map<String, Object>> policies = jdbc.queryForList(
-                "SELECT policy_id, allowed_start, allowed_end " +
-                "FROM access_policies " +
-                "WHERE user_id = ? AND is_active = 1",
-                userId
+            List<Map<String, Object>> permissions = jdbc.queryForList(
+                "SELECT allowed_start, allowed_end " +
+                "FROM asset_permissions " +
+                "WHERE user_id = ? " +
+                "AND asset_id = ? " +
+                "AND is_active = 1 " +
+                "AND valid_from IS NOT NULL " +
+                "AND valid_until IS NOT NULL " +
+                "AND valid_from <= ? " +
+                "AND valid_until >= ?",
+                userId,
+                assetId,
+                Timestamp.valueOf(now),
+                Timestamp.valueOf(now)
             );
 
-            for (Map<String, Object> policy : policies) {
-                Time startValue = (Time) policy.get("allowed_start");
-                Time endValue = (Time) policy.get("allowed_end");
+            LocalTime currentTime = now.toLocalTime();
+            boolean permitted = false;
+
+            for (Map<String, Object> permission : permissions) {
+                Object startValue = permission.get("allowed_start");
+                Object endValue = permission.get("allowed_end");
 
                 if (startValue == null || endValue == null) {
                     continue;
                 }
 
-                LocalTime start = startValue.toLocalTime();
-                LocalTime end = endValue.toLocalTime();
+                LocalTime start = startValue instanceof java.sql.Time
+                    ? ((java.sql.Time) startValue).toLocalTime()
+                    : LocalTime.parse(startValue.toString());
+
+                LocalTime end = endValue instanceof java.sql.Time
+                    ? ((java.sql.Time) endValue).toLocalTime()
+                    : LocalTime.parse(endValue.toString());
 
                 if (isWithinWindow(currentTime, start, end)) {
-                    policyId = ((Number)
-                        policy.get("policy_id")).longValue();
+                    permitted = true;
                     break;
                 }
             }
 
-            if (policyId == null) {
-                reason = "No active policy permits access at this time";
+            if (permitted) {
+                decision = "ALLOWED";
+                reason = "Active locker permission and time checks passed";
             } else {
-                List<Map<String, Object>> permissions =
-                    jdbc.queryForList(
-                        "SELECT allowed_start, allowed_end " +
-                        "FROM asset_permissions " +
-                        "WHERE user_id = ? " +
-                        "AND asset_id = ? " +
-                        "AND is_active = 1 " +
-                        "AND valid_from IS NOT NULL " +
-                        "AND valid_until IS NOT NULL " +
-                        "AND valid_from <= ? " +
-                        "AND valid_until >= ?",
-                        userId,
-                        assetId,
-                        Timestamp.valueOf(now),
-                        Timestamp.valueOf(now)
-                    );
-
-                boolean permitted = false;
-
-                for (Map<String, Object> permission : permissions) {
-                    Time startValue =
-                        (Time) permission.get("allowed_start");
-                    Time endValue =
-                        (Time) permission.get("allowed_end");
-
-                    if (startValue == null || endValue == null) {
-                        continue;
-                    }
-
-                    if (isWithinWindow(
-                            currentTime,
-                            startValue.toLocalTime(),
-                            endValue.toLocalTime())) {
-                        permitted = true;
-                        break;
-                    }
-                }
-
-                if (permitted) {
-                    decision = "ALLOWED";
-                    reason = "User, policy, locker and permission time checks passed";
-                } else {
-                    reason = "No active locker permission for this time";
-                }
+                reason = "No active locker permission for this time";
             }
         }
 
         jdbc.update(
             "INSERT INTO access_events " +
             "(user_id, policy_id, asset_id, decision, reason) " +
-            "VALUES (?, ?, ?, ?, ?)",
-            userId, policyId, assetId, decision, reason
+            "VALUES (?, NULL, ?, ?, ?)",
+            userId,
+            assetId,
+            decision,
+            reason
         );
 
-        Long eventId = jdbc.queryForObject(
+        eventId = jdbc.queryForObject(
             "SELECT LAST_INSERT_ID()",
             Long.class
         );
@@ -173,20 +146,22 @@ public class AccessDecisionService {
         );
 
         if ("DENIED".equals(decision) && eventId != null) {
-            List<Map<String, Object>> recipients = jdbc.queryForList(
-                "SELECT DISTINCT u.user_id FROM users u " +
-                "LEFT JOIN roles r ON u.role_id = r.role_id " +
-                "WHERE u.status = 'ACTIVE' " +
-                "AND (r.role_name = 'ADMIN' " +
-                "OR LOWER(u.email) IN (?, ?))",
-                "harshitha0064@gmail.com",
-                "pranawii0713@gmail.com"
+            Set<Long> recipients = new LinkedHashSet<>();
+            recipients.add(userId);
+
+            List<Long> adminIds = jdbc.query(
+                "SELECT user_id FROM users " +
+                "WHERE status = 'ACTIVE' " +
+                "AND LOWER(email) IN (?, ?, ?)",
+                (rs, rowNum) -> rs.getLong("user_id"),
+                "sivakumar6413@gmail.com",
+                "pranawii0713@gmail.com",
+                "harshitha0064@gmail.com"
             );
 
-            for (Map<String, Object> recipient : recipients) {
-                Long recipientId = ((Number)
-                    recipient.get("user_id")).longValue();
+            recipients.addAll(adminIds);
 
+            for (Long recipientId : recipients) {
                 jdbc.update(
                     "INSERT INTO security_alerts " +
                     "(event_id, recipient_user_id, severity, message) " +

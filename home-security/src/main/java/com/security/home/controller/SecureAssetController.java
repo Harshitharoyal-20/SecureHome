@@ -24,8 +24,9 @@ import java.util.Set;
 public class SecureAssetController {
 
     private static final Set<String> PRIVILEGED_EMAILS = Set.of(
-        "harshitha0064@gmail.com",
-        "pranawii0713@gmail.com"
+        "sivakumar6413@gmail.com",
+        "pranawii0713@gmail.com",
+        "harshitha0064@gmail.com"
     );
 
     private final SecureAssetRepository repository;
@@ -94,15 +95,15 @@ public class SecureAssetController {
 
         String email = findUserEmail(auth);
 
-        return email != null
-            && PRIVILEGED_EMAILS.contains(email.toLowerCase().trim());
+        return email != null &&
+            PRIVILEGED_EMAILS.contains(email.toLowerCase().trim());
     }
 
     private void requireAdmin(Authentication auth) {
         if (!isAdmin(auth)) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN,
-                "Only administrators and approved accounts can modify lockers"
+                "Only administrators can modify lockers"
             );
         }
     }
@@ -166,6 +167,13 @@ public class SecureAssetController {
 
     @GetMapping
     public List<SecureAsset> getLockers(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Login required"
+            );
+        }
+
         if (isAdmin(auth)) {
             return repository.findByStatus("ACTIVE");
         }
@@ -181,6 +189,13 @@ public class SecureAssetController {
     public SecureAsset getLocker(
             @PathVariable Integer id,
             Authentication auth) {
+
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Login required"
+            );
+        }
 
         SecureAsset asset = repository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(
