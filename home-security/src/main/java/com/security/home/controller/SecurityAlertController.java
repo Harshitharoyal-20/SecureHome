@@ -12,7 +12,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 @RestController
 @RequestMapping("/api/security-alerts")
@@ -21,12 +20,6 @@ import java.util.Set;
     "https://secure-home-kappa.vercel.app"
 })
 public class SecurityAlertController {
-
-    private static final Set<String> PRIVILEGED_EMAILS = Set.of(
-        "sivakumar6413@gmail.com",
-        "pranawii0713@gmail.com",
-        "harshitha0064@gmail.com"
-    );
 
     private final SecurityAlertRepository repository;
     private final JdbcTemplate jdbc;
@@ -44,7 +37,8 @@ public class SecurityAlertController {
 
         if (authentication == null
                 || !authentication.isAuthenticated()
-                || "anonymousUser".equals(authentication.getPrincipal())) {
+                || "anonymousUser".equals(
+                    String.valueOf(authentication.getPrincipal()))) {
             throw new ResponseStatusException(
                 HttpStatus.UNAUTHORIZED,
                 "Please log in"
@@ -64,7 +58,7 @@ public class SecurityAlertController {
             }
 
             users = jdbc.queryForList(
-                "SELECT u.user_id, u.email, r.role_name " +
+                "SELECT u.user_id, r.role_name " +
                 "FROM oauth_account_links o " +
                 "JOIN users u ON u.user_id = o.user_id " +
                 "JOIN roles r ON r.role_id = u.role_id " +
@@ -76,7 +70,7 @@ public class SecurityAlertController {
             );
         } else {
             users = jdbc.queryForList(
-                "SELECT u.user_id, u.email, r.role_name " +
+                "SELECT u.user_id, r.role_name " +
                 "FROM users u " +
                 "JOIN roles r ON r.role_id = u.role_id " +
                 "WHERE LOWER(u.email) = LOWER(?) " +
@@ -93,36 +87,17 @@ public class SecurityAlertController {
             );
         }
 
-        Map<String, Object> user = users.get(0);
-
-        int userId = ((Number) user.get("user_id")).intValue();
-        String email = user.get("email") == null
-            ? ""
-            : String.valueOf(user.get("email")).trim().toLowerCase();
-
-        String role = user.get("role_name") == null
-            ? ""
-            : String.valueOf(user.get("role_name"));
-
-        boolean isAdmin =
-            "ADMIN".equalsIgnoreCase(role)
-            || PRIVILEGED_EMAILS.contains(email);
-
-        if (isAdmin) {
-            return repository.findAllByOrderByCreatedAtDesc();
-        }
-
-        List<Integer> alertIds = jdbc.query(
-            "SELECT alert_id FROM security_alerts " +
-            "WHERE recipient_user_id = ? " +
-            "ORDER BY created_at DESC",
-            (rs, rowNum) -> rs.getInt("alert_id"),
-            userId
+        String role = String.valueOf(
+            users.get(0).get("role_name")
         );
 
-        return alertIds.stream()
-            .map(id -> repository.findById(id).orElse(null))
-            .filter(alert -> alert != null)
-            .toList();
+        if (!"ADMIN".equalsIgnoreCase(role)) {
+            throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "You cannot view security alerts"
+            );
+        }
+
+        return repository.findAllByOrderByCreatedAtDesc();
     }
 }
