@@ -36,9 +36,12 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
 
     @Bean
-    public UserDetailsService userDetailsService(JdbcTemplate jdbcTemplate) {
+    public UserDetailsService userDetailsService(
+            JdbcTemplate jdbcTemplate) {
+
         JdbcUserDetailsManager manager =
-                new JdbcUserDetailsManager(jdbcTemplate.getDataSource());
+                new JdbcUserDetailsManager(
+                        jdbcTemplate.getDataSource());
 
         manager.setUsersByUsernameQuery(
                 "SELECT email, password_hash, " +
@@ -202,6 +205,12 @@ public class SecurityConfig {
                         "/api/auth/password/reset")
                 .authenticated()
 
+                // The permission controller must independently authorize
+                // only ADMIN and the two explicitly approved accounts.
+                .requestMatchers("/api/admin/permissions/**")
+                .authenticated()
+
+                // All other admin endpoints remain ADMIN-only.
                 .requestMatchers("/api/admin/**")
                 .hasRole("ADMIN")
 

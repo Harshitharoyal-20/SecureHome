@@ -19,6 +19,11 @@ import java.util.Map;
 @RequestMapping("/api/security-alerts")
 public class SecurityAlertController {
 
+    private static final List<String> PRIVILEGED_EMAILS = List.of(
+            "harshitha0064@gmail.com",
+            "pranawii0713@gmail.com"
+    );
+
     private final SecurityAlertRepository repository;
     private final JdbcTemplate jdbcTemplate;
 
@@ -33,8 +38,7 @@ public class SecurityAlertController {
     public List<SecurityAlert> getSecurityAlerts(
             Authentication authentication) {
 
-        if (authentication == null
-                || !authentication.isAuthenticated()) {
+        if (authentication == null || !authentication.isAuthenticated()) {
             throw new ResponseStatusException(
                     HttpStatus.UNAUTHORIZED, "Please log in");
         }
@@ -51,7 +55,7 @@ public class SecurityAlertController {
             }
 
             users = jdbcTemplate.queryForList(
-                    "SELECT u.user_id, r.role_name " +
+                    "SELECT u.user_id, u.email, r.role_name " +
                     "FROM oauth_account_links o " +
                     "JOIN users u ON u.user_id = o.user_id " +
                     "JOIN roles r ON r.role_id = u.role_id " +
@@ -61,10 +65,10 @@ public class SecurityAlertController {
                     "github", id.toString());
         } else {
             users = jdbcTemplate.queryForList(
-                    "SELECT u.user_id, r.role_name " +
+                    "SELECT u.user_id, u.email, r.role_name " +
                     "FROM users u " +
                     "JOIN roles r ON r.role_id = u.role_id " +
-                    "WHERE u.email = ? " +
+                    "WHERE LOWER(u.email) = LOWER(?) " +
                     "AND u.status = 'ACTIVE'",
                     authentication.getName());
         }
@@ -75,19 +79,22 @@ public class SecurityAlertController {
                     "No active application user is linked to this login");
         }
 
-        Integer userId = ((Number) users.get(0)
-                .get("user_id")).intValue();
+        Map<String, Object> user = users.get(0);
 
-        String role = users.get(0)
-                .get("role_name").toString();
+        int userId = ((Number) user.get("user_id")).intValue();
+        String role = String.valueOf(user.get("role_name"));
+        String userEmail = String.valueOf(user.get("email"))
+                .trim().toLowerCase();
 
-        if ("ADMIN".equals(role)) {
+        boolean privilegedAccount = PRIVILEGED_EMAILS.contains(userEmail);
+
+        if ("ADMIN".equalsIgnoreCase(role) || privilegedAccount) {
             return repository.findAllByOrderByCreatedAtDesc();
         }
 
-        if ("FAMILY_MEMBER".equals(role)
-                || "SECURITY_STAFF".equals(role)
-                || "GUEST".equals(role)) {
+        if ("FAMILY_MEMBER".equalsIgnoreCase(role)
+                || "SECURITY_STAFF".equalsIgnoreCase(role)
+                || "GUEST".equalsIgnoreCase(role)) {
 
             List<Integer> alertIds = jdbcTemplate.query(
                     "SELECT alert_id FROM security_alerts " +
