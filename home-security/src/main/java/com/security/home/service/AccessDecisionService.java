@@ -6,6 +6,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Time;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +52,8 @@ public class AccessDecisionService {
         } else if (assets.isEmpty()) {
             reason = "Locker is inactive or does not exist";
         } else {
-            LocalTime now = LocalTime.now();
+            LocalDateTime now = LocalDateTime.now();
+            LocalTime currentTime = now.toLocalTime();
 
             List<Map<String, Object>> policies = jdbc.queryForList(
                 "SELECT policy_id, allowed_start, allowed_end " +
@@ -66,7 +69,7 @@ public class AccessDecisionService {
                 LocalTime end = ((Time)
                     policy.get("allowed_end")).toLocalTime();
 
-                if (isWithinWindow(now, start, end)) {
+                if (isWithinWindow(currentTime, start, end)) {
                     policyId = ((Number)
                         policy.get("policy_id")).longValue();
                     break;
@@ -78,23 +81,39 @@ public class AccessDecisionService {
             } else {
                 List<Map<String, Object>> permissions =
                     jdbc.queryForList(
-                        "SELECT allowed_start, allowed_end " +
+                        "SELECT allowed_start, allowed_end, " +
+                        "valid_from, valid_until " +
                         "FROM asset_permissions " +
-                        "WHERE user_id = ? AND asset_id = ? " +
-                        "AND is_active = 1",
-                        userId, assetId
+                        "WHERE user_id = ? " +
+                        "AND asset_id = ? " +
+                        "AND is_active = 1 " +
+                        "AND valid_from IS NOT NULL " +
+                        "AND valid_until IS NOT NULL " +
+                        "AND valid_from <= ? " +
+                        "AND valid_until >= ?",
+                        userId,
+                        assetId,
+                        Timestamp.valueOf(now),
+                        Timestamp.valueOf(now)
                     );
 
                 boolean permitted = false;
 
                 for (Map<String, Object> permission : permissions) {
-                    LocalTime start = ((Time)
-                        permission.get("allowed_start")).toLocalTime();
+                    Time startValue = (Time)
+                        permission.get("allowed_start");
 
-                    LocalTime end = ((Time)
-                        permission.get("allowed_end")).toLocalTime();
+                    Time endValue = (Time)
+                        permission.get("allowed_end");
 
-                    if (isWithinWindow(now, start, end)) {
+                    if (startValue == null || endValue == null) {
+                        continue;
+                    }
+
+                    LocalTime start = startValue.toLocalTime();
+                    LocalTime end = endValue.toLocalTime();
+
+                    if (isWithinWindow(currentTime, start, end)) {
                         permitted = true;
                         break;
                     }
@@ -102,7 +121,7 @@ public class AccessDecisionService {
 
                 if (permitted) {
                     decision = "ALLOWED";
-                    reason = "User, policy, locker and time checks passed";
+                    reason = "User, policy, locker and permission time checks passed";
                 } else {
                     reason = "No active locker permission for this time";
                 }
