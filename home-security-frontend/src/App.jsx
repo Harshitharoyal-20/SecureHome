@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import './App.css';
 
-const API = 'http://localhost:8080';
+const API = 'https://securehome-jv2h.onrender.com';
 const PAGE_SIZE = 2;
 const MAHESH_EMAIL = 'mahesh0562@gmail.com';
 
@@ -154,66 +154,68 @@ function App() {
     setLoading(true);
     setError('');
 
-    const results = await Promise.allSettled([
-      apiFetch('/api/lockers', auth),
-      apiFetch('/api/access-events', auth),
-      apiFetch('/api/security-alerts', auth)
-    ]);
+    try {
+      const results = await Promise.allSettled([
+        apiFetch('/api/lockers', auth),
+        apiFetch('/api/access-events', auth),
+        apiFetch('/api/security-alerts', auth)
+      ]);
 
-    const errors = [];
+      const errors = [];
 
-    if (results[0].status === 'fulfilled') {
-      setLockers(
-        Array.isArray(results[0].value) ? results[0].value : []
-      );
-    } else {
-      setLockers([]);
-      errors.push(`Lockers: ${results[0].reason.message}`);
-    }
-
-    if (results[1].status === 'fulfilled') {
-      setAccessEvents(
-        Array.isArray(results[1].value) ? results[1].value : []
-      );
-      setAccessError('');
-    } else {
-      setAccessEvents([]);
-
-      const statusMessage = results[1].reason?.message || '';
-      const isForbidden =
-        statusMessage.includes('403') ||
-        statusMessage.toLowerCase().includes('forbidden') ||
-        statusMessage.toLowerCase().includes('access denied');
-
-      const signedInEmail = String(auth.username || '')
-        .trim()
-        .toLowerCase();
-
-      if (signedInEmail === MAHESH_EMAIL && isForbidden) {
-        setAccessError(
-          "You can't access the access history because you don't have permission."
+      if (results[0].status === 'fulfilled') {
+        setLockers(
+          Array.isArray(results[0].value) ? results[0].value : []
         );
       } else {
-        setAccessError('');
+        setLockers([]);
+        errors.push(`Lockers: ${results[0].reason.message}`);
       }
 
-      errors.push(`Access History: ${results[1].reason.message}`);
-    }
+      if (results[1].status === 'fulfilled') {
+        setAccessEvents(
+          Array.isArray(results[1].value) ? results[1].value : []
+        );
+        setAccessError('');
+      } else {
+        setAccessEvents([]);
 
-    if (results[2].status === 'fulfilled') {
-      setSecurityAlerts(
-        Array.isArray(results[2].value) ? results[2].value : []
-      );
-    } else {
-      setSecurityAlerts([]);
-      errors.push(`Security Alerts: ${results[2].reason.message}`);
-    }
+        const statusMessage = results[1].reason?.message || '';
+        const isForbidden =
+          statusMessage.includes('403') ||
+          statusMessage.toLowerCase().includes('forbidden') ||
+          statusMessage.toLowerCase().includes('access denied');
 
-    if (errors.length) {
-      setError(errors.join(' | '));
-    }
+        const signedInEmail = String(auth.username || '')
+          .trim()
+          .toLowerCase();
 
-    setLoading(false);
+        if (signedInEmail === MAHESH_EMAIL && isForbidden) {
+          setAccessError(
+            "You can't access the access history because you don't have permission."
+          );
+        } else {
+          setAccessError('');
+        }
+
+        errors.push(`Access History: ${results[1].reason.message}`);
+      }
+
+      if (results[2].status === 'fulfilled') {
+        setSecurityAlerts(
+          Array.isArray(results[2].value) ? results[2].value : []
+        );
+      } else {
+        setSecurityAlerts([]);
+        errors.push(`Security Alerts: ${results[2].reason.message}`);
+      }
+
+      if (errors.length) {
+        setError(errors.join(' | '));
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleEmailLogin(event) {
@@ -255,7 +257,11 @@ function App() {
 
       await loadDashboard(user);
     } catch (err) {
-      setLoginError(err.message);
+      setLoginError(
+        err instanceof TypeError
+          ? 'Unable to connect to SecureHome. Check the backend and CORS configuration.'
+          : err.message
+      );
     } finally {
       setVerifyingPassword(false);
     }
@@ -267,15 +273,18 @@ function App() {
     setVerifyingPassword(true);
 
     try {
-      const response = await fetch(`${API}/api/auth/password/verify`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json'
-        },
-        body: JSON.stringify({ password })
-      });
+      const response = await fetch(
+        `${API}/api/auth/password/verify`,
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json'
+          },
+          body: JSON.stringify({ password })
+        }
+      );
 
       const result = await readResponse(response);
 
@@ -297,7 +306,11 @@ function App() {
 
       await loadDashboard(user);
     } catch (err) {
-      setLoginError(err.message);
+      setLoginError(
+        err instanceof TypeError
+          ? 'Unable to connect to SecureHome. Check the backend and CORS configuration.'
+          : err.message
+      );
     } finally {
       setVerifyingPassword(false);
     }
@@ -397,7 +410,10 @@ function App() {
         }
       );
 
-      setMessage(editingId === null ? 'Locker created.' : 'Locker updated.');
+      setMessage(
+        editingId === null ? 'Locker created.' : 'Locker updated.'
+      );
+
       startCreate();
       await loadDashboard(credentials);
     } catch (err) {
@@ -815,7 +831,9 @@ function App() {
                     User: {event.userId ?? event.user_id ?? 'Unknown'} · Asset:{' '}
                     {event.assetId ?? event.asset_id ?? 'N/A'}
                   </p>
-                  <p>Decision: {event.decision ?? event.access_decision ?? 'N/A'}</p>
+                  <p>
+                    Decision: {event.decision ?? event.access_decision ?? 'N/A'}
+                  </p>
                   <p>Reason: {event.reason ?? 'Not specified'}</p>
                   <small>
                     {event.eventTime || event.event_time
@@ -861,7 +879,9 @@ function App() {
                     Alert #{alert.alertId ?? alert.alert_id ?? 'N/A'}
                   </strong>
                   <p>Severity: {alert.severity ?? 'N/A'}</p>
-                  <p>{alert.message ?? alert.alert_message ?? 'No message provided'}</p>
+                  <p>
+                    {alert.message ?? alert.alert_message ?? 'No message provided'}
+                  </p>
                   <p>
                     Event ID: {alert.eventId ?? alert.event_id ?? 'N/A'} ·
                     Recipient: {alert.recipientUserId ?? alert.recipient_user_id ?? 'N/A'}
@@ -897,4 +917,4 @@ function App() {
   );
 }
 
-export default App;    
+export default App;
