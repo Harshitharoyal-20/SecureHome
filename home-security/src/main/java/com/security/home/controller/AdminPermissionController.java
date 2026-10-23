@@ -22,15 +22,92 @@ import java.util.Set;
 })
 public class AdminPermissionController {
 
-    private final JdbcTemplate jdbc;
-
     private static final Set<String> PRIVILEGED_EMAILS = Set.of(
-        "harshitha0064@gmail.com",
-        "pranawii0713@gmail.com"
+        "sivakumar6413@gmail.com",
+        "pranawii0713@gmail.com",
+        "harshitha0064@gmail.com"
     );
+
+    private final JdbcTemplate jdbc;
 
     public AdminPermissionController(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
+    }
+
+    private String findUserEmail(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            return null;
+        }
+
+        if (auth.getPrincipal() instanceof OAuth2User oauthUser) {
+            Object providerId = oauthUser.getAttribute("id");
+
+            if (providerId != null) {
+                List<String> linkedEmails = jdbc.query(
+                    "SELECT u.email FROM oauth_account_links o " +
+                    "JOIN users u ON u.user_id = o.user_id " +
+                    "WHERE LOWER(o.provider) = 'github' " +
+                    "AND o.provider_user_id = ? " +
+                    "AND u.status = 'ACTIVE' LIMIT 1",
+                    (rs, rowNum) -> rs.getString("email"),
+                    String.valueOf(providerId)
+                );
+
+                if (!linkedEmails.isEmpty()) {
+                    return linkedEmails.get(0);
+                }
+            }
+
+            Object email = oauthUser.getAttribute("email");
+
+            if (email != null) {
+                String oauthEmail = String.valueOf(email).trim();
+
+                List<String> registeredEmails = jdbc.query(
+                    "SELECT email FROM users " +
+                    "WHERE LOWER(email) = LOWER(?) " +
+                    "AND status = 'ACTIVE' LIMIT 1",
+                    (rs, rowNum) -> rs.getString("email"),
+                    oauthEmail
+                );
+
+                if (!registeredEmails.isEmpty()) {
+                    return registeredEmails.get(0);
+                }
+            }
+        }
+
+        List<String> emails = jdbc.query(
+            "SELECT email FROM users " +
+            "WHERE LOWER(email) = LOWER(?) " +
+            "AND status = 'ACTIVE' LIMIT 1",
+            (rs, rowNum) -> rs.getString("email"),
+            auth.getName()
+        );
+
+        return emails.isEmpty() ? null : emails.get(0);
+    }
+
+    private boolean isAdmin(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            return false;
+        }
+
+        boolean hasAdminRole = auth.getAuthorities().stream()
+            .anyMatch(a ->
+                "ROLE_ADMIN".equals(a.getAuthority())
+            );
+
+        if (hasAdminRole) {
+            return true;
+        }
+
+        String email = findUserEmail(auth);
+
+        return email != null &&
+            PRIVILEGED_EMAILS.contains(
+                email.trim().toLowerCase()
+            );
     }
 
     private void requireAdmin(Authentication auth) {
@@ -41,96 +118,63 @@ public class AdminPermissionController {
             );
         }
 
-        boolean hasAdminRole = auth.getAuthorities().stream()
-            .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
-
-        String email = findUserEmail(auth);
-
-        boolean isPrivilegedEmail = email != null
-            && PRIVILEGED_EMAILS.contains(email.toLowerCase().trim());
-
-        if (!hasAdminRole && !isPrivilegedEmail) {
+        if (!isAdmin(auth)) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN,
-                "Only administrators and approved accounts can manage permissions"
+                "Only approved administrators can manage permissions"
             );
         }
     }
 
-    private String findUserEmail(Authentication auth) {
-        if (auth.getPrincipal() instanceof OAuth2User oauthUser) {
-            Object providerId = oauthUser.getAttribute("id");
-
-            if (providerId != null) {
-                List<String> emails = jdbc.query(
-                    "SELECT u.email " +
-                    "FROM oauth_account_links o " +
-                    "JOIN users u ON u.user_id = o.user_id " +
-                    "WHERE o.provider = 'github' " +
-                    "AND o.provider_user_id = ? " +
-                    "AND u.status = 'ACTIVE' " +
-                    "LIMIT 1",
-                    (rs, rowNum) -> rs.getString("email"),
-                    String.valueOf(providerId)
-                );
-
-                if (!emails.isEmpty()) {
-                    return emails.get(0);
-                }
-            }
-
-            Object oauthEmail = oauthUser.getAttribute("email");
-            if (oauthEmail != null) {
-                return String.valueOf(oauthEmail);
-            }
-        }
-
-        String principalName = auth.getName();
-
-        List<String> emails = jdbc.query(
-            "SELECT email FROM users " +
-            "WHERE LOWER(email) = LOWER(?) " +
-            "AND status = 'ACTIVE' LIMIT 1",
-            (rs, rowNum) -> rs.getString("email"),
-            principalName
-        );
-
-        return emails.isEmpty() ? null : emails.get(0);
-    }
-
     @GetMapping("/users")
-    public List<Map<String, Object>> users(Authentication auth) {
+    public List<Map<String, Object>> users(
+            Authentication auth) {
+
         requireAdmin(auth);
 
         return jdbc.queryForList(
-            "SELECT user_id AS userId, full_name AS fullName, email " +
-            "FROM users WHERE status = 'ACTIVE' ORDER BY user_id"
+            "SELECT user_id AS userId, " +
+            "full_name AS fullName, email " +
+            "FROM users " +
+            "WHERE status = 'ACTIVE' " +
+            "ORDER BY user_id"
         );
     }
 
     @GetMapping("/assets")
-    public List<Map<String, Object>> assets(Authentication auth) {
+    public List<Map<String, Object>> assets(
+            Authentication auth) {
+
         requireAdmin(auth);
 
         return jdbc.queryForList(
-            "SELECT asset_id AS assetId, asset_name AS assetName, " +
-            "asset_type AS assetType, location_description AS location, " +
+            "SELECT asset_id AS assetId, " +
+            "asset_name AS assetName, " +
+            "asset_type AS assetType, " +
+            "location_description AS location, " +
             "owner_user_id AS ownerUserId " +
             "FROM secure_assets " +
-            "WHERE status = 'ACTIVE' ORDER BY asset_id"
+            "WHERE status = 'ACTIVE' " +
+            "ORDER BY asset_id"
         );
     }
 
     @GetMapping
-    public List<Map<String, Object>> permissions(Authentication auth) {
+    public List<Map<String, Object>> permissions(
+            Authentication auth) {
+
         requireAdmin(auth);
 
         return jdbc.queryForList(
             "SELECT p.permission_id AS permissionId, " +
-            "p.user_id AS userId, u.full_name AS fullName, " +
-            "u.email AS email, p.asset_id AS assetId, " +
-            "s.asset_name AS assetName, p.is_active AS active, " +
-            "p.valid_from AS validFrom, p.valid_until AS validUntil " +
+            "p.user_id AS userId, " +
+            "u.full_name AS fullName, " +
+            "u.email AS email, " +
+            "p.asset_id AS assetId, " +
+            "s.asset_name AS assetName, " +
+            "p.is_active AS active, " +
+            "p.valid_from AS validFrom, " +
+            "p.valid_until AS validUntil " +
             "FROM asset_permissions p " +
             "JOIN users u ON u.user_id = p.user_id " +
             "JOIN secure_assets s ON s.asset_id = p.asset_id " +
@@ -187,13 +231,14 @@ public class AdminPermissionController {
             );
         }
 
-        List<Map<String, Object>> existing = jdbc.queryForList(
-            "SELECT permission_id FROM asset_permissions " +
-            "WHERE user_id = ? AND asset_id = ? " +
-            "ORDER BY permission_id DESC LIMIT 1",
-            userId,
-            assetId
-        );
+        List<Map<String, Object>> existing =
+            jdbc.queryForList(
+                "SELECT permission_id FROM asset_permissions " +
+                "WHERE user_id = ? AND asset_id = ? " +
+                "ORDER BY permission_id DESC LIMIT 1",
+                userId,
+                assetId
+            );
 
         if (existing.isEmpty()) {
             jdbc.update(
@@ -211,7 +256,8 @@ public class AdminPermissionController {
                 existing.get(0).get("permission_id")).intValue();
 
             jdbc.update(
-                "UPDATE asset_permissions SET is_active = 1, " +
+                "UPDATE asset_permissions SET " +
+                "is_active = 1, " +
                 "allowed_start = '00:00:00', " +
                 "allowed_end = '23:59:59', " +
                 "valid_from = ?, valid_until = ? " +
@@ -240,7 +286,8 @@ public class AdminPermissionController {
         requireAdmin(auth);
 
         int updated = jdbc.update(
-            "UPDATE asset_permissions SET is_active = 0 " +
+            "UPDATE asset_permissions " +
+            "SET is_active = 0 " +
             "WHERE permission_id = ?",
             permissionId
         );
@@ -252,10 +299,16 @@ public class AdminPermissionController {
             );
         }
 
-        return Map.of("message", "Permission revoked");
+        return Map.of(
+            "message",
+            "Permission revoked"
+        );
     }
 
-    private int number(Map<String, Object> body, String key) {
+    private int number(
+            Map<String, Object> body,
+            String key) {
+
         try {
             Object value = body.get(key);
 
@@ -263,7 +316,9 @@ public class AdminPermissionController {
                 throw new NumberFormatException();
             }
 
-            return Integer.parseInt(String.valueOf(value));
+            return Integer.parseInt(
+                String.valueOf(value)
+            );
         } catch (Exception ex) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
@@ -275,6 +330,7 @@ public class AdminPermissionController {
     private LocalDateTime dateTime(
             Map<String, Object> body,
             String key) {
+
         try {
             Object value = body.get(key);
 
@@ -282,11 +338,21 @@ public class AdminPermissionController {
                 throw new IllegalArgumentException();
             }
 
-            return LocalDateTime.parse(String.valueOf(value));
+            String input = String.valueOf(value);
+
+            try {
+                return LocalDateTime.parse(input);
+            } catch (Exception ignored) {
+                return java.time.LocalDateTime.parse(
+                    input,
+                    java.time.format.DateTimeFormatter
+                        .ofPattern("yyyy-MM-dd'T'HH:mm")
+                );
+            }
         } catch (Exception ex) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                key + " must use the format YYYY-MM-DDTHH:mm:ss"
+                key + " must use YYYY-MM-DDTHH:mm format"
             );
         }
     }
