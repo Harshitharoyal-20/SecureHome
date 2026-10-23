@@ -6,8 +6,6 @@ import java.util.List;
 import com.security.home.CustomOAuth2UserService;
 import com.security.home.security.PasswordVerificationFilter;
 
-import jakarta.servlet.http.HttpServletResponse;
-
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
