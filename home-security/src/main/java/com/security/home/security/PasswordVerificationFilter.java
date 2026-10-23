@@ -46,24 +46,22 @@ public class PasswordVerificationFilter extends OncePerRequestFilter {
 
         HttpSession session = request.getSession(false);
 
-        boolean passwordVerified = session != null
-                && Boolean.TRUE.equals(
-                        session.getAttribute(VERIFIED_ATTRIBUTE));
-
         boolean oauthAuthenticated = session != null
                 && Boolean.TRUE.equals(
                         session.getAttribute(
                                 OAUTH_AUTHENTICATED_ATTRIBUTE));
 
-        if (!passwordVerified && !oauthAuthenticated) {
+        boolean passwordVerified = session != null
+                && Boolean.TRUE.equals(
+                        session.getAttribute(VERIFIED_ATTRIBUTE));
+
+        if (!oauthAuthenticated && !passwordVerified) {
             response.setStatus(
                     HttpServletResponse.SC_FORBIDDEN);
             response.setContentType("application/json");
             response.setCharacterEncoding("UTF-8");
-
             response.getWriter().write(
-                    "{\"error\":\"PASSWORD_VERIFICATION_REQUIRED\"}");
-
+                    "{\"error\":\"AUTHENTICATION_REQUIRED\"}");
             return;
         }
 

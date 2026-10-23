@@ -91,9 +91,15 @@ public class SecurityConfig {
     @Bean
     public AuthenticationSuccessHandler oauthSuccessHandler() {
         return (request, response, authentication) -> {
-            request.getSession(true).setAttribute(
+            var session = request.getSession(true);
+
+            session.setAttribute(
                     PasswordVerificationFilter.OAUTH_AUTHENTICATED_ATTRIBUTE,
                     true
+            );
+
+            session.removeAttribute(
+                    PasswordVerificationFilter.VERIFIED_ATTRIBUTE
             );
 
             response.sendRedirect(
