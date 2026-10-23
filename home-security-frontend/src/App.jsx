@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useState } from 'react';
 import './App.css';
 
@@ -67,10 +68,18 @@ function App() {
 
       if (user.authenticated !== true) return null;
 
+      const oauthAuthenticated =
+        user.oauthAuthenticated === true;
+
+      const verified =
+        oauthAuthenticated || user.passwordVerified === true;
+
       return {
         type: 'session',
         username: user.username,
-        authorities: user.authorities || []
+        authorities: user.authorities || [],
+        passwordVerified: verified,
+        oauthAuthenticated
       };
     } catch {
       return null;
@@ -82,12 +91,23 @@ function App() {
 
     async function restoreSession() {
       const user = await checkSession();
+
       if (!active) return;
 
       if (user) {
         setCredentials(user);
-        setPasswordVerified(false);
+        setPasswordVerified(
+          user.oauthAuthenticated === true ||
+          user.passwordVerified === true
+        );
         setPassword('');
+
+        if (
+          user.oauthAuthenticated === true ||
+          user.passwordVerified === true
+        ) {
+          await loadDashboard(user);
+        }
       } else {
         setCredentials(null);
         setPasswordVerified(false);
@@ -127,15 +147,11 @@ function App() {
     }
 
     if (response.status === 403) {
-      if (body?.error === 'PASSWORD_VERIFICATION_REQUIRED') {
-        setPasswordVerified(false);
-        throw new Error(
-          'Password verification is required. Please sign in again.'
-        );
-      }
-
       throw new Error(
-        responseMessage(body, 'Access denied. Check your account permissions.')
+        responseMessage(
+          body,
+          'Access denied. Check your account permissions.'
+        )
       );
     }
 
@@ -245,66 +261,32 @@ function App() {
         );
       }
 
-      const user = {
-        type: 'session',
-        username: result.username || email.trim(),
-        authorities: result.authorities || []
-      };
-
-      setCredentials(user);
-      setPasswordVerified(true);
-      setPassword('');
-
-      await loadDashboard(user);
-    } catch (err) {
-      setLoginError(
-        err instanceof TypeError
-          ? 'Unable to connect to SecureHome. Check the backend and CORS configuration.'
-          : err.message
-      );
-    } finally {
-      setVerifyingPassword(false);
-    }
-  }
-
-  async function handlePasswordVerification(event) {
-    event.preventDefault();
-    setLoginError('');
-    setVerifyingPassword(true);
-
-    try {
-      const response = await fetch(
-        `${API}/api/auth/password/verify`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json'
-          },
-          body: JSON.stringify({ password })
-        }
-      );
-
-      const result = await readResponse(response);
-
-      if (!response.ok || result?.verified !== true) {
-        throw new Error(
-          responseMessage(result, 'Password verification failed.')
-        );
-      }
-
       const user = await checkSession();
 
-      if (!user) {
-        throw new Error('Your session expired. Please sign in again.');
+      if (user) {
+        const verifiedUser = {
+          ...user,
+          passwordVerified: true
+        };
+
+        setCredentials(verifiedUser);
+        setPasswordVerified(true);
+        setPassword('');
+        await loadDashboard(verifiedUser);
+      } else {
+        const fallbackUser = {
+          type: 'session',
+          username: result.username || email.trim(),
+          authorities: result.authorities || [],
+          passwordVerified: true,
+          oauthAuthenticated: false
+        };
+
+        setCredentials(fallbackUser);
+        setPasswordVerified(true);
+        setPassword('');
+        await loadDashboard(fallbackUser);
       }
-
-      setCredentials(user);
-      setPasswordVerified(true);
-      setPassword('');
-
-      await loadDashboard(user);
     } catch (err) {
       setLoginError(
         err instanceof TypeError
@@ -317,17 +299,11 @@ function App() {
   }
 
   function handleGitHubLogin() {
+    setLoginError('');
     window.location.assign(`${API}/oauth2/authorization/github`);
   }
 
   async function logout() {
-    try {
-      await fetch(`${API}/api/auth/password/reset`, {
-        method: 'POST',
-        credentials: 'include'
-      });
-    } catch {}
-
     try {
       await fetch(`${API}/logout`, {
         method: 'POST',
@@ -348,6 +324,8 @@ function App() {
     setMessage('');
     setLoginError('');
     setEditingId(null);
+
+    window.history.replaceState({}, document.title, '/');
   }
 
   function startCreate() {
@@ -464,91 +442,49 @@ function App() {
   );
 
   if (!credentials || !passwordVerified) {
-    const githubSignedIn = Boolean(credentials);
-
     return (
       <main className="login-page">
         <section className="login-card">
           <h1>SecureHome</h1>
           <p>Private Room Security System</p>
 
-          {!githubSignedIn ? (
-            <>
-              <form onSubmit={handleEmailLogin}>
-                <h2>Sign in with Email</h2>
+          <form onSubmit={handleEmailLogin}>
+            <h2>Sign in with Email</h2>
 
-                <label htmlFor="login-email">Email</label>
-                <input
-                  id="login-email"
-                  type="email"
-                  autoComplete="username"
-                  required
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
+            <label htmlFor="login-email">Email</label>
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
 
-                <label htmlFor="login-password">Password</label>
-                <input
-                  id="login-password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
+            <label htmlFor="login-password">Password</label>
+            <input
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
 
-                {loginError && (
-                  <p className="error" role="alert">{loginError}</p>
-                )}
+            {loginError && (
+              <p className="error" role="alert">{loginError}</p>
+            )}
 
-                <button type="submit" disabled={verifyingPassword}>
-                  {verifyingPassword ? 'Signing in...' : 'Sign in with Email'}
-                </button>
-              </form>
+            <button type="submit" disabled={verifyingPassword}>
+              {verifyingPassword ? 'Signing in...' : 'Sign in with Email'}
+            </button>
+          </form>
 
-              <p>Or continue using GitHub</p>
+          <p>Or continue using GitHub</p>
 
-              <button type="button" onClick={handleGitHubLogin}>
-                Sign in with GitHub
-              </button>
-            </>
-          ) : (
-            <>
-              <p>GitHub sign-in successful.</p>
-              <p>Enter your SecureHome password to continue.</p>
-
-              <form onSubmit={handlePasswordVerification}>
-                <label htmlFor="securehome-password">
-                  SecureHome Password
-                </label>
-
-                <input
-                  id="securehome-password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-
-                {loginError && (
-                  <p className="error" role="alert">{loginError}</p>
-                )}
-
-                <button type="submit" disabled={verifyingPassword}>
-                  {verifyingPassword ? 'Verifying...' : 'Verify Password'}
-                </button>
-              </form>
-
-              <button
-                type="button"
-                onClick={logout}
-                disabled={verifyingPassword}
-              >
-                Cancel and Log Out
-              </button>
-            </>
-          )}
+          <button type="button" onClick={handleGitHubLogin}>
+            Sign in with GitHub
+          </button>
         </section>
       </main>
     );
