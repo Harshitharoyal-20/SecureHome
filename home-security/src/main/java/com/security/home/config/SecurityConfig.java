@@ -15,6 +15,8 @@ import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.provisioning.JdbcUserDetailsManager;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -105,7 +107,9 @@ public class SecurityConfig {
     }
 
     @Bean
-    public AuthenticationSuccessHandler oauthSuccessHandler() {
+    public AuthenticationSuccessHandler oauthSuccessHandler(
+            SecurityContextRepository securityContextRepository) {
+
         return (request, response, authentication) -> {
             var session = request.getSession(true);
 
@@ -115,6 +119,15 @@ public class SecurityConfig {
 
             session.removeAttribute(
                     PasswordVerificationFilter.VERIFIED_ATTRIBUTE);
+
+            SecurityContext context =
+                    SecurityContextHolder.createEmptyContext();
+
+            context.setAuthentication(authentication);
+            SecurityContextHolder.setContext(context);
+
+            securityContextRepository.saveContext(
+                    context, request, response);
 
             response.sendRedirect(
                     "https://secure-home-kappa.vercel.app/?oauth=success");
@@ -181,11 +194,9 @@ public class SecurityConfig {
                         "/login/**", "/api/auth/login")
                 .permitAll()
 
-                // Allow the controller to report the current session.
                 .requestMatchers("/api/me")
                 .permitAll()
 
-                // Password verification and reset still require authentication.
                 .requestMatchers(
                         "/api/auth/password/verify",
                         "/api/auth/password/reset")
@@ -201,7 +212,6 @@ public class SecurityConfig {
                 .hasAnyRole(
                         "ADMIN", "FAMILY_MEMBER", "SECURITY_STAFF")
 
-                // Locker and related resources remain role-protected.
                 .requestMatchers(
                         "/api/lockers", "/api/lockers/**",
                         "/api/access-events", "/api/access-events/**",
