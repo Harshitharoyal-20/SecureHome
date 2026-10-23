@@ -1,25 +1,62 @@
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 import AdminAccessPanel from './AdminAccessPanel';
 
 const API = 'https://securehome-jv2h.onrender.com';
 const PAGE_SIZE = 2;
-const MAHESH_EMAIL = 'mahesh0562@gmail.com';
 
-function hasAdminRole(authorities = []) {
-  if (!Array.isArray(authorities)) return false;
+const PRIVILEGED_EMAILS = [
+  'harshitha0064@gmail.com',
+  'pranawii0713@gmail.com'
+];
 
-  return authorities.some((authority) => {
-    const role =
-      typeof authority === 'string'
-        ? authority
-        : authority?.authority || authority?.name || authority?.role || '';
+function normalize(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
 
-    const normalized = String(role).toUpperCase();
+function getAuthorities(authorities = []) {
+  if (!Array.isArray(authorities)) return [];
 
-    return normalized === 'ROLE_ADMIN' || normalized === 'ADMIN';
+  return authorities.map((item) => {
+    if (typeof item === 'string') {
+      return item.trim().toUpperCase();
+    }
+
+    return String(
+      item?.authority ?? item?.name ?? item?.role ?? ''
+    ).trim().toUpperCase();
   });
+}
+
+function hasAdminRole(authorities) {
+  return getAuthorities(authorities).some(
+    (role) => role === 'ROLE_ADMIN' || role === 'ADMIN'
+  );
+}
+
+function isPrivilegedAccount(username) {
+  return PRIVILEGED_EMAILS.includes(normalize(username));
+}
+
+async function readResponse(response) {
+  if (response.status === 204) return null;
+
+  const text = await response.text();
+  if (!text) return null;
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+function responseMessage(body, fallback) {
+  if (typeof body === 'string' && body.trim()) return body;
+
+  return body?.detail || body?.message || body?.error ||
+    body?.title || fallback;
 }
 
 function App() {
@@ -31,15 +68,21 @@ function App() {
 
   const [lockers, setLockers] = useState([]);
   const [accessEvents, setAccessEvents] = useState([]);
-  const [accessError, setAccessError] = useState('');
   const [securityAlerts, setSecurityAlerts] = useState([]);
+
+  const [lockerError, setLockerError] = useState('');
+  const [accessError, setAccessError] = useState('');
+  const [alertError, setAlertError] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [page, setPage] = useState(1);
   const [activeSection, setActiveSection] = useState('dashboard');
-
   const [editingId, setEditingId] = useState(null);
 
   const [form, setForm] = useState({
@@ -50,63 +93,11 @@ function App() {
     status: 'ACTIVE'
   });
 
-  const [loginError, setLoginError] = useState('');
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(false);
+  const isAdmin =
+    hasAdminRole(credentials?.authorities) ||
+    isPrivilegedAccount(credentials?.username);
 
-  const isAdmin = hasAdminRole(credentials?.authorities);
-
-  async function readResponse(response) {
-    if (response.status === 204) return null;
-
-    const text = await response.text();
-
-    if (!text) return null;
-
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
-    }
-  }
-
-  function responseMessage(body, fallback) {
-    if (typeof body === 'string') return body;
-
-    return body?.detail || body?.message || body?.error || fallback;
-  }
-
-  async function checkSession() {
-    try {
-      const response = await fetch(`${API}/api/me`, {
-        credentials: 'include',
-        headers: { Accept: 'application/json' }
-      });
-
-      if (!response.ok) return null;
-
-      const user = await response.json();
-
-      if (user.authenticated !== true) return null;
-
-      const oauthAuthenticated = user.oauthAuthenticated === true;
-      const verified =
-        oauthAuthenticated || user.passwordVerified === true;
-
-      return {
-        type: 'session',
-        username: user.username,
-        authorities: user.authorities || [],
-        passwordVerified: verified,
-        oauthAuthenticated
-      };
-    } catch {
-      return null;
-    }
-  }
-
-  async function apiFetch(path, auth, options = {}) {
+  const apiFetch = useCallback(async (path, auth, options = {}) => {
     if (auth?.type !== 'session') {
       throw new Error('Please sign in first.');
     }
@@ -131,7 +122,10 @@ function App() {
 
     if (response.status === 403) {
       throw new Error(
-        responseMessage(body, 'Access denied. Check your account permissions.')
+        responseMessage(
+          body,
+          "You can't view this locker because you don't have permission."
+        )
       );
     }
 
@@ -142,13 +136,43 @@ function App() {
     }
 
     return body;
-  }
+  }, []);
 
-  async function loadDashboard(auth) {
+  const checkSession = useCallback(async () => {
+    try {
+      const response = await fetch(`${API}/api/me`, {
+        credentials: 'include',
+        headers: { Accept: 'application/json' }
+      });
+
+      if (!response.ok) return null;
+
+      const user = await response.json();
+      if (user.authenticated !== true) return null;
+
+      const oauthAuthenticated = user.oauthAuthenticated === true;
+      const verified =
+        oauthAuthenticated || user.passwordVerified === true;
+
+      return {
+        type: 'session',
+        username: user.username || user.email || '',
+        authorities: user.authorities || [],
+        passwordVerified: verified,
+        oauthAuthenticated
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const loadDashboard = useCallback(async (auth) => {
     if (auth?.type !== 'session') return;
 
     setLoading(true);
-    setError('');
+    setLockerError('');
+    setAccessError('');
+    setAlertError('');
 
     try {
       const results = await Promise.allSettled([
@@ -157,47 +181,23 @@ function App() {
         apiFetch('/api/security-alerts', auth)
       ]);
 
-      const errors = [];
-
       if (results[0].status === 'fulfilled') {
         setLockers(
           Array.isArray(results[0].value) ? results[0].value : []
         );
       } else {
         setLockers([]);
-        errors.push(
-          `Lockers: ${results[0].reason?.message || 'Unable to load.'}`
-        );
+        setLockerError(results[0].reason?.message || 'Unable to load lockers.');
       }
 
       if (results[1].status === 'fulfilled') {
         setAccessEvents(
           Array.isArray(results[1].value) ? results[1].value : []
         );
-        setAccessError('');
       } else {
         setAccessEvents([]);
-
-        const statusMessage = results[1].reason?.message || '';
-        const isForbidden =
-          statusMessage.includes('403') ||
-          statusMessage.toLowerCase().includes('forbidden') ||
-          statusMessage.toLowerCase().includes('access denied');
-
-        const signedInEmail = String(auth.username || '')
-          .trim()
-          .toLowerCase();
-
-        if (signedInEmail === MAHESH_EMAIL && isForbidden) {
-          setAccessError(
-            "You can't access the access history because you don't have permission."
-          );
-        } else {
-          setAccessError('');
-        }
-
-        errors.push(
-          `Access History: ${results[1].reason?.message || 'Unable to load.'}`
+        setAccessError(
+          results[1].reason?.message || 'Unable to load access history.'
         );
       }
 
@@ -207,25 +207,20 @@ function App() {
         );
       } else {
         setSecurityAlerts([]);
-        errors.push(
-          `Security Alerts: ${results[2].reason?.message || 'Unable to load.'}`
+        setAlertError(
+          results[2].reason?.message || 'Unable to load security alerts.'
         );
-      }
-
-      if (errors.length) {
-        setError(errors.join(' | '));
       }
     } finally {
       setLoading(false);
     }
-  }
+  }, [apiFetch]);
 
   useEffect(() => {
     let active = true;
 
     async function restoreSession() {
       const user = await checkSession();
-
       if (!active) return;
 
       if (user) {
@@ -236,7 +231,6 @@ function App() {
           user.passwordVerified === true;
 
         setPasswordVerified(verified);
-        setPassword('');
 
         if (verified) {
           await loadDashboard(user);
@@ -256,11 +250,10 @@ function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [checkSession, loadDashboard]);
 
   async function handleEmailLogin(event) {
     event.preventDefault();
-
     setLoginError('');
     setVerifyingPassword(true);
 
@@ -286,34 +279,26 @@ function App() {
         );
       }
 
-      const user = await checkSession();
+      const sessionUser = await checkSession();
 
-      let signedInUser;
+      const user = sessionUser
+        ? { ...sessionUser, passwordVerified: true }
+        : {
+            type: 'session',
+            username: result?.username || email.trim(),
+            authorities: result?.authorities || [],
+            passwordVerified: true,
+            oauthAuthenticated: false
+          };
 
-      if (user) {
-        signedInUser = {
-          ...user,
-          passwordVerified: true
-        };
-      } else {
-        signedInUser = {
-          type: 'session',
-          username: result?.username || email.trim(),
-          authorities: result?.authorities || [],
-          passwordVerified: true,
-          oauthAuthenticated: false
-        };
-      }
-
-      setCredentials(signedInUser);
+      setCredentials(user);
       setPasswordVerified(true);
       setPassword('');
-
-      await loadDashboard(signedInUser);
+      await loadDashboard(user);
     } catch (err) {
       setLoginError(
         err instanceof TypeError
-          ? 'Unable to connect to SecureHome. Check the backend and CORS configuration.'
+          ? 'Unable to connect. Check the backend and CORS settings.'
           : err.message
       );
     } finally {
@@ -333,7 +318,7 @@ function App() {
         credentials: 'include'
       });
     } catch {
-      // Clear the local interface even if the logout request fails.
+      // Clear the interface even if the logout request fails.
     }
 
     setCredentials(null);
@@ -343,25 +328,20 @@ function App() {
     setEmail('');
     setLockers([]);
     setAccessEvents([]);
-    setAccessError('');
     setSecurityAlerts([]);
+    setLockerError('');
+    setAccessError('');
+    setAlertError('');
     setError('');
     setMessage('');
     setLoginError('');
     setEditingId(null);
     setActiveSection('dashboard');
-
     window.history.replaceState({}, document.title, '/');
   }
 
-  function startCreate() {
-    if (!isAdmin) {
-      setError('Only administrators can create lockers.');
-      return;
-    }
-
+  function resetLockerForm() {
     setEditingId(null);
-
     setForm({
       assetName: '',
       assetType: 'LOCKER',
@@ -369,19 +349,27 @@ function App() {
       ownerUserId: '1',
       status: 'ACTIVE'
     });
+  }
 
+  function startCreate() {
     setError('');
     setMessage('');
+
+    if (!isAdmin) {
+      setError('Only authorized administrators can create lockers.');
+      return;
+    }
+
+    resetLockerForm();
   }
 
   function startEdit(asset) {
     if (!isAdmin) {
-      setError('Only administrators can edit lockers.');
+      setError('Only authorized administrators can edit lockers.');
       return;
     }
 
     setEditingId(asset.assetId);
-
     setForm({
       assetName: asset.assetName || '',
       assetType: asset.assetType || 'LOCKER',
@@ -389,28 +377,26 @@ function App() {
       ownerUserId: String(asset.ownerUserId ?? ''),
       status: asset.status || 'ACTIVE'
     });
-
     setError('');
     setMessage('');
   }
 
   async function saveLocker(event) {
     event.preventDefault();
-
-    if (!isAdmin) {
-      setError('Only administrators can create or update lockers.');
-      return;
-    }
-
     setError('');
     setMessage('');
+
+    if (!isAdmin) {
+      setError('Only authorized administrators can manage lockers.');
+      return;
+    }
 
     const name = form.assetName.trim();
     const location = form.locationDescription.trim();
     const owner = Number(form.ownerUserId);
 
     if (!name || !location || !Number.isInteger(owner) || owner <= 0) {
-      setError('Enter an asset name, location, and valid owner ID.');
+      setError('Enter an asset name, location, and valid owner user ID.');
       return;
     }
 
@@ -424,9 +410,7 @@ function App() {
 
     try {
       await apiFetch(
-        editingId === null
-          ? '/api/lockers'
-          : `/api/lockers/${editingId}`,
+        editingId === null ? '/api/lockers' : `/api/lockers/${editingId}`,
         credentials,
         {
           method: editingId === null ? 'POST' : 'PUT',
@@ -434,20 +418,8 @@ function App() {
         }
       );
 
-      setMessage(
-        editingId === null ? 'Locker created.' : 'Locker updated.'
-      );
-
-      setEditingId(null);
-
-      setForm({
-        assetName: '',
-        assetType: 'LOCKER',
-        locationDescription: 'Private Room',
-        ownerUserId: '1',
-        status: 'ACTIVE'
-      });
-
+      setMessage(editingId === null ? 'Locker created.' : 'Locker updated.');
+      resetLockerForm();
       await loadDashboard(credentials);
     } catch (err) {
       setError(err.message);
@@ -456,7 +428,7 @@ function App() {
 
   async function deleteLocker(asset) {
     if (!isAdmin) {
-      setError('Only administrators can delete lockers.');
+      setError('Only authorized administrators can delete lockers.');
       return;
     }
 
@@ -478,15 +450,13 @@ function App() {
   }
 
   const filteredLockers = useMemo(() => {
-    return lockers.filter((locker) => {
-      const term = search.toLowerCase();
+    const term = normalize(search);
 
-      return (
-        (locker.assetName || '').toLowerCase().includes(term) &&
-        (typeFilter === 'ALL' || locker.assetType === typeFilter) &&
-        (statusFilter === 'ALL' || locker.status === statusFilter)
-      );
-    });
+    return lockers.filter((locker) =>
+      normalize(locker.assetName).includes(term) &&
+      (typeFilter === 'ALL' || locker.assetType === typeFilter) &&
+      (statusFilter === 'ALL' || locker.status === statusFilter)
+    );
   }, [lockers, search, typeFilter, statusFilter]);
 
   const totalPages = Math.max(
@@ -495,7 +465,6 @@ function App() {
   );
 
   const safePage = Math.min(page, totalPages);
-
   const visibleLockers = filteredLockers.slice(
     (safePage - 1) * PAGE_SIZE,
     safePage * PAGE_SIZE
@@ -541,7 +510,6 @@ function App() {
           </form>
 
           <p>Or continue using GitHub</p>
-
           <button type="button" onClick={handleGitHubLogin}>
             Sign in with GitHub
           </button>
@@ -557,46 +525,19 @@ function App() {
         <p className="side-subtitle">SMART SECURITY SYSTEM</p>
 
         <nav>
-          <a
-            href="#dashboard"
-            onClick={() => setActiveSection('dashboard')}
-          >
-            Dashboard
-          </a>
-
-          <a
-            href="#lockers"
-            onClick={() => setActiveSection('lockers')}
-          >
-            My Lockers
-          </a>
-
-          <a
-            href="#access"
-            onClick={() => setActiveSection('access')}
-          >
-            Access History
-          </a>
-
-          <a
-            href="#alerts"
-            onClick={() => setActiveSection('alerts')}
-          >
-            Security Alerts
-          </a>
-
+          <a href="#dashboard" onClick={() => setActiveSection('dashboard')}>Dashboard</a>
+          <a href="#lockers" onClick={() => setActiveSection('lockers')}>My Lockers</a>
+          <a href="#access" onClick={() => setActiveSection('access')}>Access History</a>
+          <a href="#alerts" onClick={() => setActiveSection('alerts')}>Security Alerts</a>
           {isAdmin && (
-            <a
-              href="#admin-permissions"
-              onClick={() => setActiveSection('admin-permissions')}
-            >
+            <a href="#admin-permissions" onClick={() => setActiveSection('admin-permissions')}>
               Admin Permissions
             </a>
           )}
         </nav>
 
         <div className="sidebar-bottom">
-          {isAdmin ? 'Administrator Access' : 'Context-Aware Security'}
+          {isAdmin ? 'Administrator Access' : 'Family / User Access'}
         </div>
       </aside>
 
@@ -605,17 +546,12 @@ function App() {
           <div>
             <p className="eyebrow">PRIVATE ROOM PROTECTION</p>
             <h1>Security Dashboard</h1>
+            <p className="muted">Monitor your private room and smart lockers.</p>
+            <p className="muted">Signed in as: {credentials.username}</p>
             <p className="muted">
-              Monitor your private room and smart lockers.
-            </p>
-            <p className="muted">
-              Signed in as: {credentials.username}
-            </p>
-            <p className="muted">
-              Account type: {isAdmin ? 'Administrator' : 'Normal user'}
+              Account type: {isAdmin ? 'Administrator Access' : 'Family / User Access'}
             </p>
           </div>
-
           <button type="button" onClick={logout}>Log Out</button>
         </header>
 
@@ -626,7 +562,7 @@ function App() {
             <p>
               {isAdmin
                 ? 'Manage secure assets and user access permissions.'
-                : 'View the secure assets your account is authorized to access.'}
+                : 'View secure assets your account is authorized to access.'}
             </p>
           </div>
           <div className="shield">◆</div>
@@ -637,14 +573,10 @@ function App() {
             <p>Accessible Secure Assets</p>
             <h2>{lockers.length}</h2>
           </article>
-
           <article className="stat-card">
             <p>Active Assets</p>
-            <h2>
-              {lockers.filter((asset) => asset.status === 'ACTIVE').length}
-            </h2>
+            <h2>{lockers.filter((asset) => asset.status === 'ACTIVE').length}</h2>
           </article>
-
           <article className="stat-card">
             <p>Protected Location</p>
             <h2>Private Room</h2>
@@ -655,165 +587,78 @@ function App() {
           <div className="section-heading">
             <div>
               <h2>My Secure Assets</h2>
-              <p className="muted">
-                Locker records available to your account.
-              </p>
+              <p className="muted">Locker records available to your account.</p>
             </div>
-
             <div className="action-row">
-              <button
-                type="button"
-                disabled={loading}
-                onClick={() => loadDashboard(credentials)}
-              >
+              <button type="button" disabled={loading} onClick={() => loadDashboard(credentials)}>
                 {loading ? 'Loading...' : 'Refresh'}
               </button>
-
-              {isAdmin && (
-                <button type="button" onClick={startCreate}>
-                  Add Locker
-                </button>
-              )}
+              {isAdmin && <button type="button" onClick={startCreate}>Add Locker</button>}
             </div>
           </div>
 
           {error && <p className="error" role="alert">{error}</p>}
           {message && <p className="success" role="status">{message}</p>}
+          {lockerError && <p className="error" role="alert">{lockerError}</p>}
 
-          {isAdmin ? (
+          {isAdmin && (
             <form className="locker-form" onSubmit={saveLocker}>
-              <h3>
-                {editingId === null
-                  ? 'Add a Locker'
-                  : `Edit Locker #${editingId}`}
-              </h3>
+              <h3>{editingId === null ? 'Add a Locker' : `Edit Locker #${editingId}`}</h3>
 
               <label htmlFor="assetName">Asset name</label>
-              <input
-                id="assetName"
-                required
-                maxLength={100}
-                value={form.assetName}
-                onChange={(event) =>
-                  setForm({ ...form, assetName: event.target.value })
-                }
-              />
+              <input id="assetName" required maxLength={100} value={form.assetName}
+                onChange={(event) => setForm({ ...form, assetName: event.target.value })} />
 
               <label htmlFor="assetType">Asset type</label>
-              <select
-                id="assetType"
-                value={form.assetType}
-                onChange={(event) =>
-                  setForm({ ...form, assetType: event.target.value })
-                }
-              >
+              <select id="assetType" value={form.assetType}
+                onChange={(event) => setForm({ ...form, assetType: event.target.value })}>
                 <option value="LOCKER">Locker</option>
                 <option value="SAFE">Safe</option>
               </select>
 
               <label htmlFor="location">Location</label>
-              <input
-                id="location"
-                required
-                maxLength={255}
+              <input id="location" required maxLength={255}
                 value={form.locationDescription}
-                onChange={(event) =>
-                  setForm({
-                    ...form,
-                    locationDescription: event.target.value
-                  })
-                }
-              />
+                onChange={(event) => setForm({ ...form, locationDescription: event.target.value })} />
 
               <label htmlFor="owner">Owner user ID</label>
-              <input
-                id="owner"
-                type="number"
-                min="1"
-                step="1"
-                required
+              <input id="owner" type="number" min="1" step="1" required
                 value={form.ownerUserId}
-                onChange={(event) =>
-                  setForm({ ...form, ownerUserId: event.target.value })
-                }
-              />
+                onChange={(event) => setForm({ ...form, ownerUserId: event.target.value })} />
 
               <label htmlFor="status">Status</label>
-              <select
-                id="status"
-                value={form.status}
-                onChange={(event) =>
-                  setForm({ ...form, status: event.target.value })
-                }
-              >
+              <select id="status" value={form.status}
+                onChange={(event) => setForm({ ...form, status: event.target.value })}>
                 <option value="ACTIVE">Active</option>
                 <option value="INACTIVE">Inactive</option>
               </select>
 
               <div className="action-row">
-                <button type="submit">
-                  {editingId === null ? 'Create' : 'Save Changes'}
-                </button>
-
+                <button type="submit">{editingId === null ? 'Create' : 'Save Changes'}</button>
                 {editingId !== null && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingId(null);
-                      setForm({
-                        assetName: '',
-                        assetType: 'LOCKER',
-                        locationDescription: 'Private Room',
-                        ownerUserId: '1',
-                        status: 'ACTIVE'
-                      });
-                    }}
-                  >
-                    Cancel Edit
-                  </button>
+                  <button type="button" onClick={resetLockerForm}>Cancel Edit</button>
                 )}
               </div>
             </form>
-          ) : (
-            <p className="muted">
-              View-only access: creating, editing, and deleting lockers is
-              restricted to administrators.
-            </p>
+          )}
+
+          {!isAdmin && (
+            <p className="muted">View-only access. Locker management is restricted to authorized accounts.</p>
           )}
 
           <div className="locker-controls">
-            <input
-              type="search"
-              placeholder="Search by locker name..."
-              aria-label="Search lockers"
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(1);
-              }}
-            />
+            <input type="search" placeholder="Search by locker name..." aria-label="Search lockers"
+              value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
 
-            <select
-              aria-label="Filter by type"
-              value={typeFilter}
-              onChange={(event) => {
-                setTypeFilter(event.target.value);
-                setPage(1);
-              }}
-            >
+            <select aria-label="Filter by type" value={typeFilter}
+              onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }}>
               <option value="ALL">All Types</option>
               <option value="LOCKER">Lockers</option>
               <option value="SAFE">Safes</option>
             </select>
 
-            <select
-              aria-label="Filter by status"
-              value={statusFilter}
-              onChange={(event) => {
-                setStatusFilter(event.target.value);
-                setPage(1);
-              }}
-            >
+            <select aria-label="Filter by status" value={statusFilter}
+              onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
               <option value="ALL">All Statuses</option>
               <option value="ACTIVE">Active</option>
               <option value="INACTIVE">Inactive</option>
@@ -827,66 +672,36 @@ function App() {
               <article className="asset-card" key={locker.assetId}>
                 <div className="asset-top">
                   <span>{locker.assetType === 'SAFE' ? '▤' : '▣'}</span>
-                  <span
-                    className={`active-badge ${String(
-                      locker.status || ''
-                    ).toLowerCase()}`}
-                  >
-                    {locker.status}
-                  </span>
+                  <span className={`active-badge ${normalize(locker.status)}`}>{locker.status}</span>
                 </div>
-
                 <h3>{locker.assetName}</h3>
                 <p className="muted">{locker.assetType}</p>
                 <p>{locker.locationDescription}</p>
-                <p>
-                  Asset ID: {locker.assetId} · Owner: {locker.ownerUserId}
-                </p>
-
+                <p>Asset ID: {locker.assetId} · Owner: {locker.ownerUserId}</p>
                 {isAdmin && (
                   <div className="action-row">
-                    <button
-                      type="button"
-                      onClick={() => startEdit(locker)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteLocker(locker)}
-                    >
-                      Delete
-                    </button>
+                    <button type="button" onClick={() => startEdit(locker)}>Edit</button>
+                    <button type="button" onClick={() => deleteLocker(locker)}>Delete</button>
                   </div>
                 )}
               </article>
             ))}
           </div>
 
-          {visibleLockers.length === 0 && <p>No matching lockers found.</p>}
+          {visibleLockers.length === 0 && (
+            <p>
+              {lockerError
+                ? "You can't view this locker because you don't have permission."
+                : 'No matching lockers found. If access was just granted, refresh this page.'}
+            </p>
+          )}
 
           <div className="pagination">
-            <button
-              type="button"
-              disabled={safePage <= 1}
-              onClick={() =>
-                setPage((current) => Math.max(1, current - 1))
-              }
-            >
-              Previous
-            </button>
-
+            <button type="button" disabled={safePage <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
             <span>Page {safePage} of {totalPages}</span>
-
-            <button
-              type="button"
-              disabled={safePage >= totalPages}
-              onClick={() =>
-                setPage((current) => Math.min(totalPages, current + 1))
-              }
-            >
-              Next
-            </button>
+            <button type="button" disabled={safePage >= totalPages}
+              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button>
           </div>
         </section>
 
@@ -894,121 +709,79 @@ function App() {
           <section className="panel" id="admin-permissions">
             <h2>Admin Permission Management</h2>
             <p className="muted">
-              Grant or revoke view-only access to a locker for a selected
-              time period. Users can view permitted locker details only.
+              Grant or revoke locker access for a selected time period.
             </p>
-
-            <AdminAccessPanel
-              apiFetch={apiFetch}
-              credentials={credentials}
-            />
+            <AdminAccessPanel apiFetch={apiFetch} credentials={credentials} />
           </section>
         )}
 
         <section className="lower-grid">
           <article className="panel" id="access">
             <h2>Access History</h2>
+            {accessError && <p className="error" role="alert">{accessError}</p>}
 
-            {accessEvents.map((event, index) => (
-              <div
-                className="access-item"
-                key={event.eventId ?? event.event_id ?? index}
-              >
-                <div>
-                  <strong>
-                    Event #{event.eventId ?? event.event_id ?? 'N/A'}
-                  </strong>
-                  <p>
-                    User: {event.userId ?? event.user_id ?? 'Unknown'} · Asset:{' '}
-                    {event.assetId ?? event.asset_id ?? 'N/A'}
-                  </p>
-                  <p>
-                    Decision: {event.decision ?? event.access_decision ?? 'N/A'}
-                  </p>
-                  <p>Reason: {event.reason ?? 'Not specified'}</p>
-                  <small>
-                    {event.eventTime || event.event_time
-                      ? new Date(
-                          event.eventTime ?? event.event_time
-                        ).toLocaleString()
-                      : 'Time unavailable'}
-                  </small>
+            {accessEvents.map((event, index) => {
+              const decision = event.decision ?? event.access_decision ?? 'UNKNOWN';
+              const eventId = event.eventId ?? event.event_id ?? 'N/A';
+              const eventTime = event.eventTime ?? event.event_time;
+
+              return (
+                <div className="access-item" key={eventId === 'N/A' ? index : eventId}>
+                  <div>
+                    <strong>Event #{eventId}</strong>
+                    <p>User: {event.userId ?? event.user_id ?? 'Unknown'} · Asset: {event.assetId ?? event.asset_id ?? 'N/A'}</p>
+                    <p>Decision: {decision}</p>
+                    <p>Reason: {event.reason ?? 'Not specified'}</p>
+                    <small>{eventTime ? new Date(eventTime).toLocaleString() : 'Time unavailable'}</small>
+                  </div>
+                  <span className={`status-badge ${normalize(decision)}`}>{decision}</span>
                 </div>
-
-                <span
-                  className={`status-badge ${String(
-                    event.decision ?? event.access_decision ?? ''
-                  ).toLowerCase()}`}
-                >
-                  {event.decision ?? event.access_decision ?? 'UNKNOWN'}
-                </span>
-              </div>
-            ))}
+              );
+            })}
 
             {accessEvents.length === 0 && (
               <p role={accessError ? 'alert' : 'status'}>
-                {loading
-                  ? 'Loading access history...'
-                  : accessError ||
-                    (String(credentials.username || '').trim().toLowerCase() ===
-                    MAHESH_EMAIL
-                      ? "You can't access the access history because you don't have permission."
-                      : 'No access history available. Check the API response if records exist in MySQL.')}
+                {loading ? 'Loading access history...' : accessError || 'No access history available for this account.'}
               </p>
             )}
           </article>
 
           <article className="panel" id="alerts">
             <h2>Security Alerts</h2>
+            {alertError && <p className="error" role="alert">{alertError}</p>}
 
-            {securityAlerts.map((alert, index) => (
-              <div
-                className="access-item"
-                key={alert.alertId ?? alert.alert_id ?? index}
-              >
-                <div>
-                  <strong>
-                    Alert #{alert.alertId ?? alert.alert_id ?? 'N/A'}
-                  </strong>
-                  <p>Severity: {alert.severity ?? 'N/A'}</p>
-                  <p>
-                    {alert.message ??
-                      alert.alert_message ??
-                      'No message provided'}
-                  </p>
-                  <p>
-                    Event ID: {alert.eventId ?? alert.event_id ?? 'N/A'} ·
-                    Recipient:{' '}
-                    {alert.recipientUserId ??
-                      alert.recipient_user_id ??
-                      'N/A'}
-                  </p>
-                  <p>Status: {alert.status ?? 'N/A'}</p>
+            {securityAlerts.map((alert, index) => {
+              const alertId = alert.alertId ?? alert.alert_id ?? index;
+              const severity = alert.severity ?? 'UNKNOWN';
+
+              return (
+                <div className="access-item" key={alertId}>
+                  <div>
+                    <strong>Alert #{alertId}</strong>
+                    <p>Severity: {severity}</p>
+                    <p>{alert.message ?? alert.alertMessage ?? alert.alert_message ?? 'No message provided'}</p>
+                    <p>Event ID: {alert.eventId ?? alert.event_id ?? 'N/A'} · Recipient: {alert.recipientUserId ?? alert.recipient_user_id ?? 'N/A'}</p>
+                    <p>Status: {alert.status ?? 'N/A'}</p>
+                  </div>
+                  <span className={`status-badge ${normalize(severity)}`}>{severity}</span>
                 </div>
-
-                <span
-                  className={`status-badge ${String(
-                    alert.severity || ''
-                  ).toLowerCase()}`}
-                >
-                  {alert.severity ?? 'UNKNOWN'}
-                </span>
-              </div>
-            ))}
+              );
+            })}
 
             {securityAlerts.length === 0 && (
-              <p>
-                {loading
-                  ? 'Loading security alerts...'
-                  : 'No security alerts available. Check the API response if records exist in MySQL.'}
+              <p role={alertError ? 'alert' : 'status'}>
+                {loading ? 'Loading security alerts...' : alertError || 'No security alerts available for this account.'}
               </p>
             )}
+
+            <p className="muted">
+              Denied access attempts should be recorded by the backend and shown here when an alert is available to your account.
+            </p>
           </article>
         </section>
 
         <footer>
-          SecureHome · Context-Aware Biometric Private Room and Smart Locker
-          Security System
+          SecureHome · Context-Aware Biometric Private Room and Smart Locker Security System
         </footer>
       </main>
     </div>

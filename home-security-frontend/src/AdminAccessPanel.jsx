@@ -1,6 +1,94 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+const BASE = '/api/admin/permissions';
+
+function getUserId(user) {
+  return user.userId ?? user.user_id;
+}
+
+function getAssetId(asset) {
+  return asset.assetId ?? asset.asset_id;
+}
+
+function getPermissionId(permission) {
+  return permission.permissionId ?? permission.permission_id;
+}
+
+function getUserLabel(user) {
+  const name = user.fullName ?? user.full_name ?? '';
+  const email = user.email ?? '';
+  const id = getUserId(user);
+
+  if (name && email) return `${name} — ${email}`;
+  return name || email || `User ${id}`;
+}
+
+function getAssetName(asset) {
+  return asset.assetName ?? asset.asset_name ?? 'Unnamed asset';
+}
+
+function getPermissionAssetName(permission) {
+  return permission.assetName ?? permission.asset_name ?? 'Unknown asset';
+}
+
+function getPermissionEmail(permission) {
+  return permission.email ?? 'Unknown user';
+}
+
+function getPermissionName(permission) {
+  return permission.fullName ?? permission.full_name ?? '';
+}
+
+function getValidFrom(permission) {
+  return permission.validFrom ?? permission.valid_from ?? null;
+}
+
+function getValidUntil(permission) {
+  return permission.validUntil ?? permission.valid_until ?? null;
+}
+
+function isPermissionActive(permission) {
+  const value =
+    permission.active ??
+    permission.isActive ??
+    permission.is_active ??
+    false;
+
+  return value === true || value === 1 || value === '1';
+}
+
+function formatDate(value) {
+  if (!value) return 'Not set';
+
+  return String(value).replace('T', ' ').slice(0, 19);
+}
+
+function getCurrentStatus(permission) {
+  if (!isPermissionActive(permission)) return 'Revoked';
+
+  const fromValue = getValidFrom(permission);
+  const untilValue = getValidUntil(permission);
+  const now = new Date();
+
+  if (!fromValue || !untilValue) return 'Invalid dates';
+
+  const start = new Date(fromValue);
+  const end = new Date(untilValue);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime())
+  ) {
+    return 'Invalid dates';
+  }
+
+  if (now < start) return 'Scheduled';
+  if (now > end) return 'Expired';
+
+  return 'Active';
+}
+
 export default function AdminAccessPanel({ apiFetch, credentials }) {
   const [users, setUsers] = useState([]);
   const [lockers, setLockers] = useState([]);
@@ -12,19 +100,19 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
   const [validUntil, setValidUntil] = useState('');
 
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  const base = '/api/admin/permissions';
-
   const load = useCallback(async () => {
+    setLoading(true);
     setError('');
 
     try {
       const [userData, assetData, permissionData] = await Promise.all([
-        apiFetch(`${base}/users`, credentials),
-        apiFetch(`${base}/assets`, credentials),
-        apiFetch(base, credentials)
+        apiFetch(`${BASE}/users`, credentials),
+        apiFetch(`${BASE}/assets`, credentials),
+        apiFetch(BASE, credentials)
       ]);
 
       setUsers(Array.isArray(userData) ? userData : []);
@@ -34,6 +122,8 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       );
     } catch (err) {
       setError(err.message || 'Could not load permission data.');
+    } finally {
+      setLoading(false);
     }
   }, [apiFetch, credentials]);
 
@@ -47,7 +137,7 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
     setMessage('');
 
     if (!userId || !assetId || !validFrom || !validUntil) {
-      setError('Select a user, locker, start time and expiry time.');
+      setError('Select a user, locker, start date, and expiry date.');
       return;
     }
 
@@ -59,14 +149,14 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       Number.isNaN(expiryDate.getTime()) ||
       expiryDate <= startDate
     ) {
-      setError('Expiry must be later than the start time.');
+      setError('Expiry must be later than the start date.');
       return;
     }
 
     setBusy(true);
 
     try {
-      await apiFetch(base, credentials, {
+      await apiFetch(BASE, credentials, {
         method: 'POST',
         body: JSON.stringify({
           userId: Number(userId),
@@ -77,7 +167,6 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       });
 
       setMessage('View-only permission saved successfully.');
-
       setValidFrom('');
       setValidUntil('');
 
@@ -90,23 +179,15 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
   }
 
   async function revoke(permission) {
-    const permissionId =
-      permission.permissionId ??
-      permission.permission_id;
+    const permissionId = getPermissionId(permission);
 
-    if (!permissionId) {
+    if (permissionId == null) {
       setError('Permission ID is missing. Cannot revoke this record.');
       return;
     }
 
-    const lockerName =
-      permission.assetName ??
-      permission.asset_name ??
-      'this locker';
-
-    const userEmail =
-      permission.email ??
-      'this user';
+    const lockerName = getPermissionAssetName(permission);
+    const userEmail = getPermissionEmail(permission);
 
     if (
       !window.confirm(
@@ -121,7 +202,7 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
     setBusy(true);
 
     try {
-      await apiFetch(`${base}/${permissionId}`, credentials, {
+      await apiFetch(`${BASE}/${permissionId}`, credentials, {
         method: 'DELETE'
       });
 
@@ -132,75 +213,6 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
     } finally {
       setBusy(false);
     }
-  }
-
-  function formatDate(value) {
-    if (!value) return 'Not set';
-
-    const text = String(value);
-
-    if (text.includes('T')) {
-      return text.replace('T', ' ').slice(0, 16);
-    }
-
-    return text;
-  }
-
-  function getPermissionActive(permission) {
-    return (
-      permission.active ??
-      permission.isActive ??
-      permission.is_active ??
-      false
-    );
-  }
-
-  function getPermissionId(permission) {
-    return permission.permissionId ?? permission.permission_id;
-  }
-
-  function getAssetName(permission) {
-    return permission.assetName ?? permission.asset_name ?? 'Unknown asset';
-  }
-
-  function getEmail(permission) {
-    return permission.email ?? 'Unknown user';
-  }
-
-  function getFullName(permission) {
-    return permission.fullName ?? permission.full_name ?? '';
-  }
-
-  function getValidFrom(permission) {
-    return permission.validFrom ?? permission.valid_from ?? null;
-  }
-
-  function getValidUntil(permission) {
-    return permission.validUntil ?? permission.valid_until ?? null;
-  }
-
-  function getUserId(user) {
-    return user.userId ?? user.user_id;
-  }
-
-  function getAssetId(asset) {
-    return asset.assetId ?? asset.asset_id;
-  }
-
-  function getUserLabel(user) {
-    const name = user.fullName ?? user.full_name ?? '';
-    const email = user.email ?? '';
-
-    if (name && email) return `${name} — ${email}`;
-
-    return name || email || `User ${getUserId(user)}`;
-  }
-
-  function getAssetLabel(asset) {
-    const name = asset.assetName ?? asset.asset_name ?? 'Unnamed asset';
-    const id = getAssetId(asset);
-
-    return `${name} (ID ${id})`;
   }
 
   return (
@@ -216,9 +228,9 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
         <button
           type="button"
           onClick={load}
-          disabled={busy}
+          disabled={busy || loading}
         >
-          Refresh
+          {loading ? 'Refreshing...' : 'Refresh'}
         </button>
       </div>
 
@@ -235,21 +247,17 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       )}
 
       <form className="locker-form" onSubmit={grant}>
-        <h3>Grant or Update Permission</h3>
+        <h3>Grant Locker Permission</h3>
 
-        <label htmlFor="permission-user">
-          Registered user
-        </label>
-
+        <label htmlFor="permission-user">Registered user</label>
         <select
           id="permission-user"
           value={userId}
           onChange={(event) => setUserId(event.target.value)}
           required
-          disabled={busy}
+          disabled={busy || loading}
         >
           <option value="">Select a user</option>
-
           {users.map((user) => {
             const id = getUserId(user);
 
@@ -261,34 +269,27 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
           })}
         </select>
 
-        <label htmlFor="permission-locker">
-          Locker or safe
-        </label>
-
+        <label htmlFor="permission-locker">Locker or safe</label>
         <select
           id="permission-locker"
           value={assetId}
           onChange={(event) => setAssetId(event.target.value)}
           required
-          disabled={busy}
+          disabled={busy || loading}
         >
           <option value="">Select a locker</option>
-
           {lockers.map((locker) => {
             const id = getAssetId(locker);
 
             return (
               <option key={id} value={id}>
-                {getAssetLabel(locker)}
+                {getAssetName(locker)} (ID {id})
               </option>
             );
           })}
         </select>
 
-        <label htmlFor="permission-start">
-          Access starts
-        </label>
-
+        <label htmlFor="permission-start">Access starts</label>
         <input
           id="permission-start"
           type="datetime-local"
@@ -298,10 +299,7 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
           disabled={busy}
         />
 
-        <label htmlFor="permission-expiry">
-          Access expires
-        </label>
-
+        <label htmlFor="permission-expiry">Access expires</label>
         <input
           id="permission-expiry"
           type="datetime-local"
@@ -313,16 +311,18 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
 
         <p className="muted">
           <strong>Permission level:</strong> View locker details only.
-          This permission does not grant create, edit, delete, or physical
-          unlock privileges.
+          This does not grant create, edit, delete, or physical unlock
+          privileges.
         </p>
 
-        <button type="submit" disabled={busy}>
+        <button type="submit" disabled={busy || loading}>
           {busy ? 'Saving...' : 'Grant / Update Permission'}
         </button>
       </form>
 
       <h3>Permission Records</h3>
+
+      {loading && <p>Loading permission records...</p>}
 
       <div className="permission-table-wrap">
         <table className="permission-table">
@@ -339,43 +339,13 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
 
           <tbody>
             {permissions.map((permission, index) => {
-              const permissionId = getPermissionId(permission);
-              const isActive = Boolean(
-                getPermissionActive(permission)
-              );
-
-              const validFromValue = getValidFrom(permission);
-              const validUntilValue = getValidUntil(permission);
-
-              const start = validFromValue
-                ? new Date(validFromValue)
-                : null;
-
-              const end = validUntilValue
-                ? new Date(validUntilValue)
-                : null;
-
-              const now = new Date();
-
-              const withinTimeWindow =
-                (!start ||
-                  (!Number.isNaN(start.getTime()) && now >= start)) &&
-                (!end ||
-                  (!Number.isNaN(end.getTime()) && now <= end));
-
-              const status = !isActive
-                ? 'Revoked'
-                : withinTimeWindow
-                  ? 'Active'
-                  : 'Scheduled / Expired';
-
-              const fullName = getFullName(permission);
-              const email = getEmail(permission);
+              const id = getPermissionId(permission);
+              const status = getCurrentStatus(permission);
+              const fullName = getPermissionName(permission);
+              const email = getPermissionEmail(permission);
 
               return (
-                <tr
-                  key={permissionId ?? index}
-                >
+                <tr key={id ?? index}>
                   <td>
                     {fullName && (
                       <>
@@ -386,19 +356,16 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
                     {email}
                   </td>
 
-                  <td>{getAssetName(permission)}</td>
-
-                  <td>{formatDate(validFromValue)}</td>
-
-                  <td>{formatDate(validUntilValue)}</td>
-
+                  <td>{getPermissionAssetName(permission)}</td>
+                  <td>{formatDate(getValidFrom(permission))}</td>
+                  <td>{formatDate(getValidUntil(permission))}</td>
                   <td>{status}</td>
 
                   <td>
-                    {isActive && (
+                    {isPermissionActive(permission) && (
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || loading}
                         onClick={() => revoke(permission)}
                       >
                         Revoke
@@ -412,8 +379,20 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
         </table>
       </div>
 
-      {permissions.length === 0 && (
+      {!loading && permissions.length === 0 && (
         <p>No permission records found.</p>
+      )}
+
+      {users.length === 0 && !loading && (
+        <p className="muted">
+          No registered users were returned by the server.
+        </p>
+      )}
+
+      {lockers.length === 0 && !loading && (
+        <p className="muted">
+          No lockers were returned by the server.
+        </p>
       )}
     </section>
   );
