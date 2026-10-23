@@ -142,6 +142,7 @@ public class SecurityConfig {
                 new UrlBasedCorsConfigurationSource();
 
         source.registerCorsConfiguration("/**", configuration);
+
         return source;
     }
 
@@ -171,6 +172,7 @@ public class SecurityConfig {
                     AuthorizationFilter.class)
 
             .authorizeHttpRequests(auth -> auth
+
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
 
@@ -179,8 +181,12 @@ public class SecurityConfig {
                         "/login/**", "/api/auth/login")
                 .permitAll()
 
+                // Allow the controller to report the current session.
+                .requestMatchers("/api/me")
+                .permitAll()
+
+                // Password verification and reset still require authentication.
                 .requestMatchers(
-                        "/api/me",
                         "/api/auth/password/verify",
                         "/api/auth/password/reset")
                 .authenticated()
@@ -195,6 +201,7 @@ public class SecurityConfig {
                 .hasAnyRole(
                         "ADMIN", "FAMILY_MEMBER", "SECURITY_STAFF")
 
+                // Locker and related resources remain role-protected.
                 .requestMatchers(
                         "/api/lockers", "/api/lockers/**",
                         "/api/access-events", "/api/access-events/**",
