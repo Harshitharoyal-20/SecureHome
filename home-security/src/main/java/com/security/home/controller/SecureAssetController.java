@@ -35,24 +35,47 @@ public class SecureAssetController {
                         .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
     }
 
-    private int getUserId(Authentication authentication) {
-        if (authentication == null) {
-            throw new ResponseStatusException(
-                    HttpStatus.UNAUTHORIZED, "Login required");
-        }
+    
+private int getUserId(Authentication authentication) {
+    if (authentication == null) {
+        throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED, "Login required");
+    }
 
-        List<Integer> ids = jdbcTemplate.query(
-                "SELECT user_id FROM users WHERE email = ? AND status = 'ACTIVE'",
-                (rs, rowNum) -> rs.getInt("user_id"),
-                authentication.getName());
+    String username = authentication.getName();
 
-        if (ids.isEmpty()) {
-            throw new ResponseStatusException(
-                    HttpStatus.FORBIDDEN, "Active user not found");
-        }
+    List<Integer> ids = jdbcTemplate.query(
+            "SELECT user_id FROM users " +
+            "WHERE email = ? AND status = 'ACTIVE'",
+            (rs, rowNum) -> rs.getInt("user_id"),
+            username
+    );
 
+    if (!ids.isEmpty()) {
         return ids.get(0);
     }
+
+    // Resolve a GitHub OAuth ID to its SecureHome database user.
+    ids = jdbcTemplate.query(
+            "SELECT u.user_id " +
+            "FROM users u " +
+            "JOIN oauth_accounts o ON o.user_id = u.user_id " +
+            "WHERE o.provider = 'github' " +
+            "AND o.provider_user_id = ? " +
+            "AND u.status = 'ACTIVE'",
+            (rs, rowNum) -> rs.getInt("user_id"),
+            username
+    );
+
+    if (!ids.isEmpty()) {
+        return ids.get(0);
+    }
+
+    throw new ResponseStatusException(
+            HttpStatus.FORBIDDEN,
+            "Active SecureHome user not found for this login");
+}
+
 
     private void requireAdmin(Authentication authentication) {
         if (!isAdmin(authentication)) {
