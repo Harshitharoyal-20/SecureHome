@@ -135,6 +135,8 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [page, setPage] = useState(1);
+  const pageSize = 5;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -338,55 +340,90 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       <h3>Permission Records</h3>
       {loading && <p>Loading permission records...</p>}
 
-      <div className="permission-table-wrap">
-        <table className="permission-table">
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Locker</th>
-              <th>Starts (IST)</th>
-              <th>Expires (IST)</th>
-              <th>Status</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {permissions.map((permission, index) => {
-              const id = getPermissionId(permission);
-              const fullName = getPermissionName(permission);
-              const email = getPermissionEmail(permission);
-              const targetUserId = Number(permission.userId ?? permission.user_id);
-              const linkedUser = userMap.get(targetUserId);
-              const isGithub = linkedUser?.isGithub === true || linkedUser?.isGithub === 1 || linkedUser?.isGithub === '1';
+      {(() => {
+        const totalPages = Math.max(1, Math.ceil(permissions.length / pageSize));
+        const safePage = Math.min(page, totalPages);
+        const visiblePermissions = permissions.slice(
+          (safePage - 1) * pageSize,
+          safePage * pageSize
+        );
 
-              return (
-                <tr key={id ?? index}>
-                  <td>
-                    {fullName && <>{fullName}<br /></>}
-                    <span>{email}</span>
-                    {isGithub && <span className="github-tag" title="User accessed through GitHub">GitHub</span>}
-                  </td>
-                  <td>{getPermissionAssetName(permission)}</td>
-                  <td>{formatDate(getValidFrom(permission))}</td>
-                  <td>{formatDate(getValidUntil(permission))}</td>
-                  <td>{getCurrentStatus(permission)}</td>
-                  <td>
-                    {isPermissionActive(permission) && (
-                      <button
-                        type="button"
-                        disabled={busy || loading}
-                        onClick={() => revoke(permission)}
-                      >
-                        Revoke
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+        return (
+          <>
+            <div className="permission-table-wrap">
+              <table className="permission-table">
+                <thead>
+                  <tr>
+                    <th>User</th>
+                    <th>Locker</th>
+                    <th>Starts (IST)</th>
+                    <th>Expires (IST)</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visiblePermissions.map((permission, index) => {
+                    const id = getPermissionId(permission);
+                    const fullName = getPermissionName(permission);
+                    const email = getPermissionEmail(permission);
+                    const targetUserId = Number(permission.userId ?? permission.user_id);
+                    const linkedUser = userMap.get(targetUserId);
+                    const isGithub = linkedUser?.isGithub === true || linkedUser?.isGithub === 1 || linkedUser?.isGithub === '1';
+
+                    return (
+                      <tr key={id ?? index}>
+                        <td>
+                          {fullName && <>{fullName}<br /></>}
+                          <span>{email}</span>
+                          {isGithub && <span className="github-tag" title="User accessed through GitHub">GitHub</span>}
+                        </td>
+                        <td>{getPermissionAssetName(permission)}</td>
+                        <td>{formatDate(getValidFrom(permission))}</td>
+                        <td>{formatDate(getValidUntil(permission))}</td>
+                        <td>{getCurrentStatus(permission)}</td>
+                        <td>
+                          {isPermissionActive(permission) && (
+                            <button
+                              type="button"
+                              disabled={busy || loading}
+                              onClick={() => revoke(permission)}
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {permissions.length > pageSize && (
+              <div className="pagination">
+                <button
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage(curr => Math.max(1, curr - 1))}
+                >
+                  Previous
+                </button>
+                <span>
+                  Page {safePage} of {totalPages} ({permissions.length} total records)
+                </span>
+                <button
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage(curr => Math.min(totalPages, curr + 1))}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
+        );
+      })()}
 
       {!loading && permissions.length === 0 && (
         <p>No permission records found.</p>

@@ -1166,8 +1166,8 @@ function App() {
                   {isAdmin
                     ? 'All system access and biometric verification logs.'
                     : isSecurity
-                      ? 'Security monitoring: Viewing all locker access logs.'
-                      : 'Showing your respective access history records.'}
+                      ? 'Security staff: Showing your personal access records.'
+                      : 'Showing your respective personal access records.'}
                 </p>
               </div>
             </div>
@@ -1227,9 +1227,9 @@ function App() {
                 {loading
                   ? 'Loading access history...'
                   : accessError ||
-                    (isAdmin || isSecurity
+                    (isAdmin
                       ? 'No access history recorded yet.'
-                      : 'No access history available for your account.')}
+                      : 'No access history recorded for your account.')}
               </p>
             )}
           </article>
@@ -1237,7 +1237,7 @@ function App() {
           <article className="panel" id="alerts">
             <h2>Security Alerts</h2>
 
-            {!isAdmin ? (
+            {!isAdmin && !isSecurity ? (
               <div className="alert-restriction-card" role="alert">
                 <span className="restriction-icon">🔒</span>
                 <h3>Restricted Access</h3>
@@ -1247,6 +1247,12 @@ function App() {
               </div>
             ) : (
               <>
+                {isSecurity && (
+                  <p className="security-notice">
+                    🚨 High-Risk Security Alerts · Monitored by Security Staff
+                  </p>
+                )}
+
                 {alertError && (
                   <p className="error" role="alert">
                     {alertError}
@@ -1296,15 +1302,20 @@ function App() {
                       ? alertError
                       : loading
                         ? 'Loading security alerts...'
-                        : 'No security alerts available for this account.'}
+                        : isSecurity
+                          ? 'No high-risk security alerts recorded.'
+                          : 'No security alerts available.'}
                   </p>
                 )}
               </>
             )}
 
             <p className="muted">
-              Security alerts are available only to authorized
-              administrators. Other accounts cannot access alert records.
+              {isAdmin
+                ? 'Security alerts are available only to authorized administrators.'
+                : isSecurity
+                  ? 'Security monitoring: Showing high-risk security alerts on premises.'
+                  : 'Security alerts are available only to authorized administrators.'}
             </p>
           </article>
         </section>
