@@ -1,4 +1,3 @@
-
 HELP.md
 
 # Java and Maven
@@ -39,30 +38,62 @@ HELP.md
 **/node_modules/
 **/dist/
 
-# Environment files and secrets
+# Environment files, secrets & credentials
 .env
 .env.*
+*.env
+**/.env
+**/.env.*
 !.env.example
+!.env.template
 **/application-local.properties
+**/application-secret.properties
+**/application-credentials.properties
+**/application-dev.properties
+**/application-prod.properties
 
-# Logs
-*.log
+# Secrets, private keys and certificates
+*.key
+*.pem
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.truststore
+*.pkcs12
+*.priv
+
+# SSH and user keys
+id_rsa
+id_rsa.*
+id_ecdsa
+id_ecdsa.*
+id_ed25519
+id_ed25519.*
+*.ppk
+
+# Service account keys and cloud credentials
+*service-account*.json
+*serviceaccount*.json
+google-services.json
+firebase-*.json
+client_secret*.json
+*.credentials.json
+credentials.json
+secrets.json
 
 # Database backups
 *.sql
 *.dump
+*.sqlite
+*.db
+
+# Logs
+*.log
 
 # Operating system
 .DS_Store
 Thumbs.db
-# Nested environment files
-**/.env
-**/.env.*
-!**/.env.example
-/home-security/src/main/resources/application.properties
-# Additional generated files
-**/node_modules/
-**/target/
-**/dist/
-**/build/
-/src/main/resources/application.properties
