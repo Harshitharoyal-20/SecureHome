@@ -195,6 +195,22 @@ The backend directory contains the Spring Boot application, while the frontend d
 
 SecureHome provides a web-based approach to private room and smart locker security. By combining authentication, role-based authorization, permission management, access history, and administrator-controlled security alerts, the system helps manage access to valuable assets through a centralized application.
 
+## 8. Contributors & Development Team
+
+| Contributor | GitHub Account | Email | Role & Contribution |
+|---|---|---|---|
+| **Harshitha** | [@Harshitharoyal-20](https://github.com/Harshitharoyal-20) | `harshithasree54@gmail.com` | Primary Administrator, Backend & Frontend Core Architecture, Deployment |
+| **G. S. Pranawii** | [@GSPranawii](https://github.com/GSPranawii) | `pranawiiguda@gmail.com` | Family Member Administrator, Temporary Permission Delegation & Access Portal Management |
+| **Sivakumar** | - | `sivakumar6413@gmail.com` | System Administrator, Security Rules & Policies |
+| **Mahesh** | - | `mahesh0562@gmail.com` | Security Personnel, High-Risk Security Alerts & Locker Auditing |
+
+## 9. Family Admin & Permission Delegation Portal
+
+The access management system allows family member administrators (`harshitha0064@gmail.com`, `pranawii0713@gmail.com`, `sivakumar6413@gmail.com`) to:
+- Dynamically grant and revoke time-bound access permissions to secure lockers for authenticated users.
+- Audit real-time access events and view historical access records with paginated entries.
+- Receive immediate notification badges when unauthorized or new accounts attempt access.
+
 **GitHub Repository:** https://github.com/Harshitharoyal-20/SecureHome
 
 **Live Application:** https://secure-home-kappa.vercel.app/
