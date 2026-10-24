@@ -2,19 +2,77 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 import AdminAccessPanel from './AdminAccessPanel';
 
-const API = 'https://securehome-jv2h.onrender.com';
+const API =
+  import.meta.env.VITE_API_URL !== undefined
+    ? import.meta.env.VITE_API_URL
+    : typeof window !== 'undefined' &&
+       (window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1')
+      ? ''
+      : 'https://securehome-jv2h.onrender.com';
+
 const PAGE_SIZE = 2;
+const TIME_ZONE = 'Asia/Kolkata';
 
 const PRIVILEGED_EMAILS = [
+  'sivakumar6413@gmail.com',
   'harshitha0064@gmail.com',
   'pranawii0713@gmail.com'
 ];
 
+const SECURITY_EMAILS = [
+  'mahesh0562@gmail.com'
+];
+
 const ALERTS_DENIED_MESSAGE =
-  "You can't access these in this account. Security alerts are available only to administrators.";
+  "You can't view this, only administrators can view.";
 
 function normalize(value) {
   return String(value ?? '').trim().toLowerCase();
+}
+
+function parseUtcDate(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized);
+  return new Date(hasTimezone ? normalized : `${normalized}Z`);
+}
+
+function formatDate(value) {
+  const date = parseUtcDate(value);
+  if (!date || Number.isNaN(date.getTime())) return 'Not set';
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  }).format(date);
+}
+
+function getCurrentStatus(permission) {
+  const active =
+    permission.active ??
+    permission.isActive ??
+    permission.is_active ??
+    false;
+  if (active !== true && active !== 1 && active !== '1') return 'Revoked';
+
+  const start = parseUtcDate(permission.validFrom ?? permission.valid_from);
+  const end = parseUtcDate(permission.validUntil ?? permission.valid_until);
+
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 'Active';
+  }
+
+  const now = Date.now();
+  if (now < start.getTime()) return 'Scheduled';
+  if (now > end.getTime()) return 'Expired';
+  return 'Active';
 }
 
 function getAuthorities(authorities = []) {
@@ -39,6 +97,13 @@ function hasAdminRole(authorities) {
 
 function isPrivilegedAccount(username) {
   return PRIVILEGED_EMAILS.includes(normalize(username));
+}
+
+function isSecurityAccount(username, authorities = []) {
+  if (SECURITY_EMAILS.includes(normalize(username))) return true;
+  return getAuthorities(authorities).some((role) =>
+    role.includes('SECURITY')
+  );
 }
 
 async function readResponse(response) {
@@ -79,6 +144,7 @@ function App() {
   const [lockers, setLockers] = useState([]);
   const [accessEvents, setAccessEvents] = useState([]);
   const [securityAlerts, setSecurityAlerts] = useState([]);
+  const [myPermissions, setMyPermissions] = useState([]);
 
   const [lockerError, setLockerError] = useState('');
   const [accessError, setAccessError] = useState('');
@@ -104,8 +170,18 @@ function App() {
   });
 
   const isAdmin =
-    hasAdminRole(credentials?.authorities) ||
-    isPrivilegedAccount(credentials?.username);
+    credentials?.isAdmin ??
+    (hasAdminRole(credentials?.authorities) ||
+      isPrivilegedAccount(credentials?.username) ||
+      isPrivilegedAccount(credentials?.email));
+
+  const isSecurity =
+    credentials?.isSecurity ??
+    isSecurityAccount(credentials?.username || credentials?.email, credentials?.authorities);
+
+  const isGithubUser =
+    credentials?.isGithub ??
+    (credentials?.oauthAuthenticated === true);
 
   const apiFetch = useCallback(async (path, auth, options = {}) => {
     if (auth?.type !== 'session') {
@@ -178,6 +254,13 @@ function App() {
       return {
         type: 'session',
         username: user.username || user.email || '',
+        email: user.email || '',
+        fullName: user.fullName || '',
+        userId: user.userId,
+        role: user.role || '',
+        isAdmin: user.isAdmin,
+        isSecurity: user.isSecurity,
+        isGithub: user.isGithub,
         authorities: user.authorities || [],
         passwordVerified: verified,
         oauthAuthenticated
@@ -199,7 +282,8 @@ function App() {
       const results = await Promise.allSettled([
         apiFetch('/api/lockers', auth),
         apiFetch('/api/access-events', auth),
-        apiFetch('/api/security-alerts', auth)
+        apiFetch('/api/security-alerts', auth),
+        apiFetch('/api/admin/permissions/my', auth)
       ]);
 
       if (results[0].status === 'fulfilled') {
@@ -248,6 +332,16 @@ function App() {
             : alertRequestError?.message ||
               'Unable to load security alerts.'
         );
+      }
+
+      if (results[3].status === 'fulfilled') {
+        setMyPermissions(
+          Array.isArray(results[3].value)
+            ? results[3].value
+            : []
+        );
+      } else {
+        setMyPermissions([]);
       }
     } finally {
       setLoading(false);
@@ -370,6 +464,7 @@ function App() {
     setLockers([]);
     setAccessEvents([]);
     setSecurityAlerts([]);
+    setMyPermissions([]);
     setLockerError('');
     setAccessError('');
     setAlertError('');
@@ -605,6 +700,15 @@ function App() {
             My Lockers
           </a>
 
+          {!isAdmin && (
+            <a
+              href="#my-permissions"
+              onClick={() => setActiveSection('my-permissions')}
+            >
+              My Permissions
+            </a>
+          )}
+
           <a
             href="#access"
             onClick={() => setActiveSection('access')}
@@ -631,8 +735,10 @@ function App() {
 
         <div className="sidebar-bottom">
           {isAdmin
-            ? 'Administrator Access'
-            : 'Family / User Access'}
+            ? 'Administrator & Family Access'
+            : isSecurity
+              ? 'Security Staff Access'
+              : 'GitHub User Access'}
         </div>
       </aside>
 
@@ -645,13 +751,15 @@ function App() {
               Monitor your private room and smart lockers.
             </p>
             <p className="muted">
-              Signed in as: {credentials.username}
+              Signed in as: {credentials.fullName ? `${credentials.fullName} (${credentials.username})` : credentials.username}
             </p>
             <p className="muted">
               Account type:{' '}
               {isAdmin
-                ? 'Administrator Access'
-                : 'Family / User Access'}
+                ? 'Administrator & Family Member Access'
+                : isSecurity
+                  ? 'Security Staff Access'
+                  : 'GitHub User Access'}
             </p>
           </div>
 
@@ -666,8 +774,10 @@ function App() {
             <h2>Your space. Your security.</h2>
             <p>
               {isAdmin
-                ? 'Manage secure assets and user access permissions.'
-                : 'View secure assets your account is authorized to access.'}
+                ? 'Manage secure assets, user access permissions, and security alerts.'
+                : isSecurity
+                  ? 'Monitor secure lockers and track premises access events.'
+                  : 'View secure assets authorized for your account and check your active permissions.'}
             </p>
           </div>
 
@@ -974,11 +1084,70 @@ function App() {
           </div>
         </section>
 
+        {!isAdmin && (
+          <section className="panel" id="my-permissions">
+            <div className="section-heading">
+              <div>
+                <h2>My Granted Permissions</h2>
+                <p className="muted">
+                  Lockers and safe access permissions granted to your account by administrators and family members.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => loadDashboard(credentials)}
+              >
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </button>
+            </div>
+
+            {myPermissions.length > 0 ? (
+              <div className="permission-cards-grid">
+                {myPermissions.map((perm, idx) => {
+                  const permId = perm.permissionId ?? perm.permission_id ?? idx;
+                  const assetName = perm.assetName ?? perm.asset_name ?? 'Locker';
+                  const assetType = perm.assetType ?? perm.asset_type ?? 'LOCKER';
+                  const location = perm.location ?? perm.location_description ?? 'Private Room';
+                  const from = formatDate(perm.validFrom ?? perm.valid_from);
+                  const until = formatDate(perm.validUntil ?? perm.valid_until);
+                  const status = getCurrentStatus(perm);
+
+                  return (
+                    <div className="granted-perm-card" key={permId}>
+                      <div className="perm-header">
+                        <span className="perm-icon">{assetType === 'SAFE' ? '▤' : '▣'}</span>
+                        <span className={`perm-badge ${status.toLowerCase()}`}>{status}</span>
+                      </div>
+                      <h3>{assetName}</h3>
+                      <p className="muted">{assetType} · {location}</p>
+                      <div className="perm-timing">
+                        <p><strong>Starts (IST):</strong> {from}</p>
+                        <p><strong>Expires (IST):</strong> {until}</p>
+                      </div>
+                      <div className="perm-level">
+                        <span className="perm-tag">✓ Authorized Access</span>
+                        <span className="perm-note">Approved by Administrator</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="muted">
+                {loading
+                  ? 'Loading your granted permissions...'
+                  : 'No active locker permissions have been granted to your account yet. Contact an administrator (Sivakumar, Harshitha, or Pranawii) to request access.'}
+              </p>
+            )}
+          </section>
+        )}
+
         {isAdmin && (
           <section className="panel" id="admin-permissions">
             <h2>Admin Permission Management</h2>
             <p className="muted">
-              Grant or revoke locker access for a selected time period.
+              Grant or revoke locker access for GitHub users and family members for specific time windows.
             </p>
 
             <AdminAccessPanel
@@ -990,7 +1159,18 @@ function App() {
 
         <section className="lower-grid">
           <article className="panel" id="access">
-            <h2>Access History</h2>
+            <div className="section-heading">
+              <div>
+                <h2>Access History</h2>
+                <p className="muted">
+                  {isAdmin
+                    ? 'All system access and biometric verification logs.'
+                    : isSecurity
+                      ? 'Security monitoring: Viewing all locker access logs.'
+                      : 'Showing your respective access history records.'}
+                </p>
+              </div>
+            </div>
 
             {accessError && (
               <p className="error" role="alert">
@@ -1047,7 +1227,9 @@ function App() {
                 {loading
                   ? 'Loading access history...'
                   : accessError ||
-                    'No access history available for this account.'}
+                    (isAdmin || isSecurity
+                      ? 'No access history recorded yet.'
+                      : 'No access history available for your account.')}
               </p>
             )}
           </article>
@@ -1055,57 +1237,69 @@ function App() {
           <article className="panel" id="alerts">
             <h2>Security Alerts</h2>
 
-            {alertError && (
-              <p className="error" role="alert">
-                {alertError}
-              </p>
-            )}
+            {!isAdmin ? (
+              <div className="alert-restriction-card" role="alert">
+                <span className="restriction-icon">🔒</span>
+                <h3>Restricted Access</h3>
+                <p className="restriction-text">
+                  You can't view this, only administrators can view.
+                </p>
+              </div>
+            ) : (
+              <>
+                {alertError && (
+                  <p className="error" role="alert">
+                    {alertError}
+                  </p>
+                )}
 
-            {securityAlerts.map((alert, index) => {
-              const alertId =
-                alert.alertId ?? alert.alert_id ?? index;
+                {securityAlerts.map((alert, index) => {
+                  const alertId =
+                    alert.alertId ?? alert.alert_id ?? index;
 
-              const severity = alert.severity ?? 'UNKNOWN';
+                  const severity = alert.severity ?? 'UNKNOWN';
 
-              return (
-                <div className="access-item" key={alertId}>
-                  <div>
-                    <strong>Alert #{alertId}</strong>
-                    <p>Severity: {severity}</p>
-                    <p>
-                      {alert.message ??
-                        alert.alertMessage ??
-                        alert.alert_message ??
-                        'No message provided'}
-                    </p>
-                    <p>
-                      Event ID: {alert.eventId ?? alert.event_id ?? 'N/A'}
-                      {' · '}
-                      Recipient:{' '}
-                      {alert.recipientUserId ??
-                        alert.recipient_user_id ??
-                        'N/A'}
-                    </p>
-                    <p>Status: {alert.status ?? 'N/A'}</p>
-                  </div>
+                  return (
+                    <div className="access-item" key={alertId}>
+                      <div>
+                        <strong>Alert #{alertId}</strong>
+                        <p>Severity: {severity}</p>
+                        <p>
+                          {alert.message ??
+                            alert.alertMessage ??
+                            alert.alert_message ??
+                            'No message provided'}
+                        </p>
+                        <p>
+                          Event ID: {alert.eventId ?? alert.event_id ?? 'N/A'}
+                          {' · '}
+                          Recipient:{' '}
+                          {alert.recipientUserId ??
+                            alert.recipient_user_id ??
+                            'N/A'}
+                        </p>
+                        <p>Status: {alert.status ?? 'N/A'}</p>
+                      </div>
 
-                  <span
-                    className={`status-badge ${normalize(severity)}`}
-                  >
-                    {severity}
-                  </span>
-                </div>
-              );
-            })}
+                      <span
+                        className={`status-badge ${normalize(severity)}`}
+                      >
+                        {severity}
+                      </span>
+                    </div>
+                  );
+                })}
 
-            {securityAlerts.length === 0 && (
-              <p role={alertError ? 'alert' : 'status'}>
-                {alertError
-                  ? alertError
-                  : loading
-                    ? 'Loading security alerts...'
-                    : 'No security alerts available for this account.'}
-              </p>
+                {securityAlerts.length === 0 && (
+                  <p role={alertError ? 'alert' : 'status'}>
+                    {alertError
+                      ? alertError
+                      : loading
+                        ? 'Loading security alerts...'
+                        : 'No security alerts available for this account.'}
+                  </p>
+                )}
+              </>
             )}
 
             <p className="muted">

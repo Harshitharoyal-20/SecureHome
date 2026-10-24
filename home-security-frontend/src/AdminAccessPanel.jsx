@@ -1,5 +1,5 @@
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const BASE = '/api/admin/permissions';
 const TIME_ZONE = 'Asia/Kolkata';
@@ -20,9 +20,11 @@ function getUserLabel(user) {
   const name = user.fullName ?? user.full_name ?? '';
   const email = user.email ?? '';
   const id = getUserId(user);
+  const isGithub = user.isGithub === true || user.isGithub === 1 || user.isGithub === '1';
+  const tag = isGithub ? ' [GitHub User]' : '';
 
-  if (name && email) return `${name} — ${email}`;
-  return name || email || `User ${id}`;
+  if (name && email) return `${name} — ${email}${tag}`;
+  return `${name || email || `User ${id}`}${tag}`;
 }
 
 function getAssetName(asset) {
@@ -237,16 +239,24 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
     }
   }
 
+  const userMap = useMemo(() => {
+    const map = new Map();
+    users.forEach((u) => {
+      map.set(Number(getUserId(u)), u);
+    });
+    return map;
+  }, [users]);
+
   return (
     <section className="admin-access-panel" id="manage-access">
       <div className="section-heading">
         <div>
           <h2>Manage Access</h2>
           <p className="muted">
-            Grant, view, or revoke time-limited access.
+            Grant, view, or revoke time-limited access for GitHub users and family members.
           </p>
           <p className="muted">
-            Times are displayed in India Standard Time (IST).
+            Times are displayed in India Standard Time (IST). Any administrator can grant or revoke permissions.
           </p>
         </div>
         <button type="button" onClick={load} disabled={busy || loading}>
@@ -260,7 +270,7 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       <form className="locker-form" onSubmit={grant}>
         <h3>Grant Locker Permission</h3>
 
-        <label htmlFor="permission-user">Registered user</label>
+        <label htmlFor="permission-user">Select User (GitHub visitors or registered family)</label>
         <select
           id="permission-user"
           value={userId}
@@ -345,12 +355,16 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
               const id = getPermissionId(permission);
               const fullName = getPermissionName(permission);
               const email = getPermissionEmail(permission);
+              const targetUserId = Number(permission.userId ?? permission.user_id);
+              const linkedUser = userMap.get(targetUserId);
+              const isGithub = linkedUser?.isGithub === true || linkedUser?.isGithub === 1 || linkedUser?.isGithub === '1';
 
               return (
                 <tr key={id ?? index}>
                   <td>
                     {fullName && <>{fullName}<br /></>}
-                    {email}
+                    <span>{email}</span>
+                    {isGithub && <span className="github-tag" title="User accessed through GitHub">GitHub</span>}
                   </td>
                   <td>{getPermissionAssetName(permission)}</td>
                   <td>{formatDate(getValidFrom(permission))}</td>
