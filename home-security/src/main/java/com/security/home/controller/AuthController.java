@@ -37,9 +37,11 @@ public class AuthController {
     private static final String SECURITY_EMAIL = "mahesh0562@gmail.com";
 
     private final JdbcTemplate jdbc;
+    private final com.security.home.service.GithubNotificationService githubNotificationService;
 
-    public AuthController(JdbcTemplate jdbc) {
+    public AuthController(JdbcTemplate jdbc, com.security.home.service.GithubNotificationService githubNotificationService) {
         this.jdbc = jdbc;
+        this.githubNotificationService = githubNotificationService;
     }
 
     @GetMapping("/me")
@@ -111,6 +113,13 @@ public class AuthController {
             if (fullName.isBlank()) {
                 Object name = oauth.getAttribute("name");
                 fullName = name != null ? String.valueOf(name) : String.valueOf(oauth.getAttribute("login"));
+            }
+
+            try {
+                Object loginObj = oauth.getAttribute("login");
+                String login = loginObj != null ? String.valueOf(loginObj) : (fullName.isBlank() ? "github-user" : fullName);
+                githubNotificationService.recordAccess(login, fullName, email);
+            } catch (Exception ignored) {
             }
         } else {
             String loginName = authentication.getName();

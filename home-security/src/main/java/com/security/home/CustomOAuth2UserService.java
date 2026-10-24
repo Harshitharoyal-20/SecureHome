@@ -35,14 +35,18 @@ public class CustomOAuth2UserService
         implements OAuth2UserService<OAuth2UserRequest, OAuth2User> {
 
     private final JdbcTemplate jdbcTemplate;
+    private final com.security.home.service.GithubNotificationService githubNotificationService;
     private final DefaultOAuth2UserService delegate =
             new DefaultOAuth2UserService();
     private final RestTemplate restTemplate = new RestTemplate();
     private final BCryptPasswordEncoder passwordEncoder =
             new BCryptPasswordEncoder();
 
-    public CustomOAuth2UserService(JdbcTemplate jdbcTemplate) {
+    public CustomOAuth2UserService(
+            JdbcTemplate jdbcTemplate,
+            com.security.home.service.GithubNotificationService githubNotificationService) {
         this.jdbcTemplate = jdbcTemplate;
+        this.githubNotificationService = githubNotificationService;
     }
 
     @Override
@@ -170,6 +174,20 @@ public class CustomOAuth2UserService
         );
 
         authorities.add(new SimpleGrantedAuthority("ROLE_" + roleName));
+
+        try {
+            String githubLogin = githubUser.getAttribute("login") != null
+                    ? String.valueOf(githubUser.getAttribute("login"))
+                    : "github-user";
+            String githubName = githubUser.getAttribute("name") != null
+                    ? String.valueOf(githubUser.getAttribute("name"))
+                    : githubLogin;
+            String userEmail = githubUser.getAttribute("email") != null
+                    ? String.valueOf(githubUser.getAttribute("email"))
+                    : "";
+            githubNotificationService.recordAccess(githubLogin, githubName, userEmail);
+        } catch (Exception ignored) {
+        }
 
         return new DefaultOAuth2User(
                 authorities,

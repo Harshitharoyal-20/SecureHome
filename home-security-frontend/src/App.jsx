@@ -137,12 +137,15 @@ function responseMessage(body, fallback) {
 function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [credentials, setCredentials] = useState(null);
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [verifyingPassword, setVerifyingPassword] = useState(false);
 
   const [lockers, setLockers] = useState([]);
   const [accessEvents, setAccessEvents] = useState([]);
+  const [activeAccessList, setActiveAccessList] = useState([]);
+  const [githubNotifications, setGithubNotifications] = useState([]);
   const [securityAlerts, setSecurityAlerts] = useState([]);
   const [myPermissions, setMyPermissions] = useState([]);
 
@@ -278,13 +281,28 @@ function App() {
     setAccessError('');
     setAlertError('');
 
+    const isUserAdmin =
+      auth.isAdmin ??
+      (hasAdminRole(auth.authorities) ||
+        isPrivilegedAccount(auth.username) ||
+        isPrivilegedAccount(auth.email));
+
     try {
-      const results = await Promise.allSettled([
+      const promises = [
         apiFetch('/api/lockers', auth),
         apiFetch('/api/access-events', auth),
         apiFetch('/api/security-alerts', auth),
-        apiFetch('/api/admin/permissions/my', auth)
-      ]);
+        apiFetch('/api/admin/permissions/my', auth),
+        apiFetch('/api/access-events/active-now', auth).catch(() => [])
+      ];
+
+      if (isUserAdmin) {
+        promises.push(
+          apiFetch('/api/admin/github-notifications', auth).catch(() => [])
+        );
+      }
+
+      const results = await Promise.allSettled(promises);
 
       if (results[0].status === 'fulfilled') {
         setLockers(
@@ -343,10 +361,61 @@ function App() {
       } else {
         setMyPermissions([]);
       }
+
+      if (results[4]?.status === 'fulfilled') {
+        setActiveAccessList(
+          Array.isArray(results[4].value)
+            ? results[4].value
+            : []
+        );
+      } else {
+        setActiveAccessList([]);
+      }
+
+      if (isUserAdmin && results[5]?.status === 'fulfilled') {
+        setGithubNotifications(
+          Array.isArray(results[5].value)
+            ? results[5].value
+            : []
+        );
+      }
     } finally {
       setLoading(false);
     }
   }, [apiFetch]);
+
+  const dismissGithubNotification = useCallback(
+    async (id) => {
+      setGithubNotifications((prev) => prev.filter((n) => n.id !== id));
+      if (credentials) {
+        try {
+          await apiFetch(`/api/admin/github-notifications/${id}/dismiss`, credentials, {
+            method: 'POST'
+          });
+        } catch {
+          // optimistic dismissal
+        }
+      }
+    },
+    [apiFetch, credentials]
+  );
+
+  useEffect(() => {
+    if (!credentials || !passwordVerified || !isAdmin) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const notifs = await apiFetch('/api/admin/github-notifications', credentials);
+        if (Array.isArray(notifs)) {
+          setGithubNotifications(notifs);
+        }
+      } catch {
+        // silent background poll
+      }
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [credentials, passwordVerified, isAdmin, apiFetch]);
 
   useEffect(() => {
     let active = true;
@@ -647,14 +716,35 @@ function App() {
             />
 
             <label htmlFor="login-password">Password</label>
-            <input
-              id="login-password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
+            <div className="password-input-wrapper">
+              <input
+                id="login-password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                type="button"
+                className="password-toggle-btn"
+                onClick={() => setShowPassword((prev) => !prev)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                )}
+              </button>
+            </div>
 
             {loginError && (
               <p className="error" role="alert">
@@ -743,6 +833,40 @@ function App() {
       </aside>
 
       <main className="main" id="dashboard">
+        {isAdmin && githubNotifications.length > 0 && (
+          <aside className="github-popup-wrapper" role="region" aria-label="GitHub Access Notifications">
+            {githubNotifications.map((notif) => (
+              <div className="github-popup-banner" key={notif.id}>
+                <div className="popup-left">
+                  <div className="popup-badge">
+                    <span className="popup-pulse"></span>
+                    <svg className="github-svg-icon" width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+                    </svg>
+                  </div>
+                  <div className="popup-info">
+                    <strong className="popup-username">
+                      {notif.githubUsername || 'A GitHub user'} is trying to access
+                    </strong>
+                    <span className="popup-time">
+                      GitHub login attempt · {notif.accessTime ? formatDate(notif.accessTime) : 'Just now'}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="popup-close-button"
+                  onClick={() => dismissGithubNotification(notif.id)}
+                  aria-label="Remove notification"
+                  title="Dismiss notification"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </aside>
+        )}
+
         <header className="topbar">
           <div>
             <p className="eyebrow">PRIVATE ROOM PROTECTION</p>
@@ -1158,7 +1282,7 @@ function App() {
         )}
 
         <section className="lower-grid">
-          <article className="panel" id="access">
+          <article className="panel access-history-panel" id="access">
             <div className="section-heading">
               <div>
                 <h2>Access History</h2>
@@ -1166,72 +1290,168 @@ function App() {
                   {isAdmin
                     ? 'All system access and biometric verification logs.'
                     : isSecurity
-                      ? 'Security staff: Showing your personal access records.'
-                      : 'Showing your respective personal access records.'}
+                      ? 'Security staff: Showing your personal access records and active locker authorization.'
+                      : 'Showing your respective personal access records and active locker authorization.'}
                 </p>
               </div>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => loadDashboard(credentials)}
+              >
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </button>
             </div>
 
-            {accessError && (
-              <p className="error" role="alert">
-                {accessError}
-              </p>
-            )}
-
-            {accessEvents.map((event, index) => {
-              const decision =
-                event.decision ??
-                event.access_decision ??
-                'UNKNOWN';
-
-              const eventId =
-                event.eventId ?? event.event_id ?? 'N/A';
-
-              const eventTime =
-                event.eventTime ?? event.event_time;
-
-              return (
-                <div
-                  className="access-item"
-                  key={eventId === 'N/A' ? index : eventId}
-                >
-                  <div>
-                    <strong>Event #{eventId}</strong>
-                    <p>
-                      User: {event.userId ?? event.user_id ?? 'Unknown'}
-                      {' · '}
-                      Asset: {event.assetId ?? event.asset_id ?? 'N/A'}
-                    </p>
-                    <p>Decision: {decision}</p>
-                    <p>
-                      Reason: {event.reason ?? 'Not specified'}
-                    </p>
-                    <small>
-                      {eventTime
-                        ? new Date(eventTime).toLocaleString()
-                        : 'Time unavailable'}
-                    </small>
-                  </div>
-
-                  <span
-                    className={`status-badge ${normalize(decision)}`}
-                  >
-                    {decision}
-                  </span>
+            {/* Currently Accessing Section */}
+            <div className="currently-accessing-box">
+              <div className="box-title-row">
+                <span className="live-dot" aria-hidden="true"></span>
+                <h3>Currently Accessing (Active in Your Account)</h3>
+              </div>
+              {activeAccessList.length > 0 ? (
+                <div className="currently-active-grid">
+                  {activeAccessList.map((asset, idx) => (
+                    <div className="active-access-chip" key={asset.assetId || idx}>
+                      <span className="chip-icon">{asset.assetType === 'SAFE' ? '▤' : '▣'}</span>
+                      <div className="chip-details">
+                        <strong className="chip-name">{asset.assetName || `Locker #${asset.assetId}`}</strong>
+                        <span className="chip-loc">{asset.assetType || 'LOCKER'} · {asset.location || 'Private Room'}</span>
+                        <span className="chip-period">
+                          {asset.validFrom && asset.validUntil
+                            ? `Valid Window: ${formatDate(asset.validFrom)} – ${formatDate(asset.validUntil)}`
+                            : 'Status: Live Access Window Open'}
+                        </span>
+                      </div>
+                      <span className="chip-active-badge">Active Now</span>
+                    </div>
+                  ))}
                 </div>
-              );
-            })}
+              ) : (
+                <p className="muted no-active-text">
+                  No locker or safe is currently within an active access window for this account.
+                </p>
+              )}
+            </div>
 
-            {accessEvents.length === 0 && (
-              <p role={accessError ? 'alert' : 'status'}>
-                {loading
-                  ? 'Loading access history...'
-                  : accessError ||
-                    (isAdmin
-                      ? 'No access history recorded yet.'
-                      : 'No access history recorded for your account.')}
-              </p>
-            )}
+            {/* Past Access Events & Verification History */}
+            <div className="access-events-section">
+              <div className="box-title-row">
+                <h3>Access Events & Period History</h3>
+              </div>
+
+              {accessError && (
+                <p className="error" role="alert">
+                  {accessError}
+                </p>
+              )}
+
+              {accessEvents.length > 0 ? (
+                <div className="access-cards-list">
+                  {accessEvents.map((event, index) => {
+                    const decision =
+                      event.decision ??
+                      event.access_decision ??
+                      'UNKNOWN';
+                    const isAllowed = decision === 'ALLOWED';
+
+                    const eventId =
+                      event.eventId ?? event.event_id ?? index;
+
+                    const eventTime =
+                      event.eventTime ?? event.event_time;
+
+                    const assetName =
+                      event.assetName ?? `Locker #${event.assetId ?? event.asset_id ?? 'N/A'}`;
+
+                    const assetType =
+                      event.assetType ?? 'LOCKER';
+
+                    const location =
+                      event.location ?? 'Private Room';
+
+                    const userName =
+                      event.userName ?? (event.userEmail ? event.userEmail : `User #${event.userId}`);
+
+                    const isCurrentlyActive =
+                      event.activeNow === 1 || event.activeNow === true;
+
+                    return (
+                      <div
+                        className={`access-event-card ${isAllowed ? 'event-allowed' : 'event-denied'}`}
+                        key={eventId}
+                      >
+                        <div className="event-card-header">
+                          <div className="event-asset-info">
+                            <span className="event-type-icon">
+                              {assetType === 'SAFE' ? '▤' : '▣'}
+                            </span>
+                            <div>
+                              <h4 className="event-asset-title">{assetName}</h4>
+                              <span className="event-asset-subtitle">
+                                {assetType} · {location}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="event-badges">
+                            {isCurrentlyActive && (
+                              <span className="active-now-tag">Active Right Now</span>
+                            )}
+                            <span className={`status-badge ${normalize(decision)}`}>
+                              {isAllowed ? '✓ ALLOWED' : '✕ DENIED'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="event-card-body">
+                          <div className="event-info-grid">
+                            <div className="info-item">
+                              <span className="info-label">Access Time (IST)</span>
+                              <span className="info-value">
+                                {eventTime ? formatDate(eventTime) : 'Time unavailable'}
+                              </span>
+                            </div>
+
+                            {(event.validFrom || event.validUntil) && (
+                              <div className="info-item">
+                                <span className="info-label">Permitted Window</span>
+                                <span className="info-value">
+                                  {formatDate(event.validFrom)} – {formatDate(event.validUntil)}
+                                </span>
+                              </div>
+                            )}
+
+                            {isAdmin && (
+                              <div className="info-item">
+                                <span className="info-label">Account User</span>
+                                <span className="info-value">{userName}</span>
+                              </div>
+                            )}
+
+                            <div className="info-item full-width">
+                              <span className="info-label">Verification Reason</span>
+                              <span className="info-value reason-value">
+                                {event.reason || 'Verification record processed'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p role={accessError ? 'alert' : 'status'}>
+                  {loading
+                    ? 'Loading access history...'
+                    : accessError ||
+                      (isAdmin
+                        ? 'No access history recorded yet.'
+                        : 'No access history recorded for your account.')}
+                </p>
+              )}
+            </div>
           </article>
 
           <article className="panel" id="alerts">
