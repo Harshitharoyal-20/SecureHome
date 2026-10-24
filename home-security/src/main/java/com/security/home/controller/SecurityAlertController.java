@@ -113,8 +113,7 @@ public class SecurityAlertController {
         if (!isAdmin) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN,
-                "You can't access these in this account. " +
-                "Security alerts are available only to administrators."
+                "You can't view this, only administrators can view."
             );
         }
 

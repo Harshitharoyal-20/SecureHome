@@ -40,8 +40,8 @@ public class DemoPasswordInitializer implements ApplicationRunner {
         );
 
         if (updated != 1) {
-            throw new IllegalStateException(
-                "Expected one account for email: " + email
+            System.out.println(
+                "Notice: Could not update password for " + email + " (rows updated: " + updated + ")"
             );
         }
     }

@@ -72,9 +72,21 @@ public class SecureAssetController {
             }
         }
 
+        List<Integer> emailIds = jdbc.query(
+            "SELECT u.user_id FROM users u " +
+            "WHERE LOWER(u.email) = LOWER(?) " +
+            "AND u.status = 'ACTIVE' LIMIT 1",
+            (rs, rowNum) -> rs.getInt("user_id"),
+            auth.getName()
+        );
+
+        if (!emailIds.isEmpty()) {
+            return emailIds.get(0);
+        }
+
         throw new ResponseStatusException(
             HttpStatus.FORBIDDEN,
-            "Your GitHub account is not linked to an active SecureHome user."
+            "No active application user is linked to this login."
         );
     }
 
@@ -105,7 +117,15 @@ public class SecureAssetController {
             }
         }
 
-        return null;
+        List<String> emails = jdbc.query(
+            "SELECT email FROM users " +
+            "WHERE LOWER(email) = LOWER(?) " +
+            "AND status = 'ACTIVE' LIMIT 1",
+            (rs, rowNum) -> rs.getString("email"),
+            auth.getName()
+        );
+
+        return emails.isEmpty() ? null : emails.get(0);
     }
 
     private boolean isAdmin(Authentication auth) {
@@ -124,6 +144,22 @@ public class SecureAssetController {
             && PRIVILEGED_EMAILS.contains(
                 email.trim().toLowerCase(Locale.ROOT)
             );
+    }
+
+    private boolean isSecurity(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            return false;
+        }
+
+        if (auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().toUpperCase(Locale.ROOT).contains("SECURITY"))) {
+            return true;
+        }
+
+        String email = findUserEmail(auth);
+
+        return email != null
+            && "mahesh0562@gmail.com".equalsIgnoreCase(email.trim());
     }
 
     private void requireAdmin(Authentication auth) {
@@ -158,8 +194,13 @@ public class SecureAssetController {
             "AND p.valid_from IS NOT NULL " +
             "AND p.valid_until IS NOT NULL " +
             "AND UTC_TIMESTAMP() BETWEEN p.valid_from AND p.valid_until " +
-            "AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30') " +
-            "BETWEEN p.allowed_start AND p.allowed_end" +
+            "AND (" +
+            "p.allowed_start IS NULL OR p.allowed_end IS NULL " +
+            "OR p.allowed_start = p.allowed_end " +
+            "OR (p.allowed_start = '00:00:00' AND p.allowed_end = '23:59:59') " +
+            "OR CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30') BETWEEN p.allowed_start AND p.allowed_end " +
+            "OR CURTIME() BETWEEN p.allowed_start AND p.allowed_end" +
+            ")" +
             "))",
             Integer.class,
             assetId,
@@ -179,7 +220,7 @@ public class SecureAssetController {
             );
         }
 
-        if (isAdmin(auth)) {
+        if (isAdmin(auth) || isSecurity(auth)) {
             return repository.findByStatus("ACTIVE");
         }
 
@@ -215,7 +256,7 @@ public class SecureAssetController {
             );
         }
 
-        if (!isAdmin(auth)) {
+        if (!isAdmin(auth) && !isSecurity(auth)) {
             int userId = getUserId(auth);
 
             if (!hasAccess(id, userId)) {

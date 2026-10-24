@@ -93,6 +93,42 @@ public class AdminPermissionController {
         return emails.isEmpty() ? null : emails.get(0);
     }
 
+    private Integer findUserId(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            return null;
+        }
+
+        if (auth.getPrincipal() instanceof OAuth2User oauthUser) {
+            Object providerId = oauthUser.getAttribute("id");
+
+            if (providerId != null) {
+                List<Integer> ids = jdbc.query(
+                    "SELECT u.user_id FROM oauth_account_links o " +
+                    "JOIN users u ON u.user_id = o.user_id " +
+                    "WHERE LOWER(o.provider) = 'github' " +
+                    "AND o.provider_user_id = ? " +
+                    "AND u.status = 'ACTIVE' LIMIT 1",
+                    (rs, rowNum) -> rs.getInt("user_id"),
+                    String.valueOf(providerId)
+                );
+
+                if (!ids.isEmpty()) {
+                    return ids.get(0);
+                }
+            }
+        }
+
+        List<Integer> ids = jdbc.query(
+            "SELECT u.user_id FROM users u " +
+            "WHERE LOWER(u.email) = LOWER(?) " +
+            "AND u.status = 'ACTIVE' LIMIT 1",
+            (rs, rowNum) -> rs.getInt("user_id"),
+            auth.getName()
+        );
+
+        return ids.isEmpty() ? null : ids.get(0);
+    }
+
     private boolean isAdmin(Authentication auth) {
         if (auth == null || !auth.isAuthenticated()) {
             return false;
@@ -134,11 +170,50 @@ public class AdminPermissionController {
         requireAdmin(auth);
 
         return jdbc.queryForList(
-            "SELECT user_id AS userId, " +
-            "full_name AS fullName, email " +
-            "FROM users " +
-            "WHERE status = 'ACTIVE' " +
-            "ORDER BY user_id"
+            "SELECT u.user_id AS userId, " +
+            "u.full_name AS fullName, " +
+            "u.email AS email, " +
+            "r.role_name AS roleName, " +
+            "EXISTS (" +
+            "  SELECT 1 FROM oauth_account_links o " +
+            "  WHERE o.user_id = u.user_id AND LOWER(o.provider) = 'github'" +
+            ") AS isGithub " +
+            "FROM users u " +
+            "JOIN roles r ON r.role_id = u.role_id " +
+            "WHERE u.status = 'ACTIVE' " +
+            "ORDER BY u.user_id"
+        );
+    }
+
+    @GetMapping("/my")
+    public List<Map<String, Object>> myPermissions(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Please sign in first"
+            );
+        }
+
+        Integer userId = findUserId(auth);
+        if (userId == null) {
+            return List.of();
+        }
+
+        return jdbc.queryForList(
+            "SELECT p.permission_id AS permissionId, " +
+            "p.user_id AS userId, " +
+            "p.asset_id AS assetId, " +
+            "s.asset_name AS assetName, " +
+            "s.asset_type AS assetType, " +
+            "s.location_description AS location, " +
+            "p.is_active AS active, " +
+            "p.valid_from AS validFrom, " +
+            "p.valid_until AS validUntil " +
+            "FROM asset_permissions p " +
+            "JOIN secure_assets s ON s.asset_id = p.asset_id " +
+            "WHERE p.user_id = ? " +
+            "ORDER BY p.permission_id DESC",
+            userId
         );
     }
 
