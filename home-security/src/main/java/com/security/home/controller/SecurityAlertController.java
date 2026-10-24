@@ -44,22 +44,23 @@ public class SecurityAlertController {
 
         if (authentication == null
                 || !authentication.isAuthenticated()
-                || "anonymousUser".equals(authentication.getPrincipal())) {
+                || "anonymousUser".equals(
+                    String.valueOf(authentication.getPrincipal()))) {
             throw new ResponseStatusException(
                 HttpStatus.UNAUTHORIZED,
-                "Please log in"
+                "Please log in first."
             );
         }
 
         List<Map<String, Object>> users;
 
         if (authentication.getPrincipal() instanceof OAuth2User oauth) {
-            Object providerId = oauth.getAttribute("id");
+            Object githubId = oauth.getAttribute("id");
 
-            if (providerId == null) {
+            if (githubId == null) {
                 throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
-                    "GitHub account ID is missing"
+                    "Your GitHub account ID could not be identified."
                 );
             }
 
@@ -72,7 +73,7 @@ public class SecurityAlertController {
                 "AND o.provider_user_id = ? " +
                 "AND u.status = 'ACTIVE' " +
                 "LIMIT 1",
-                String.valueOf(providerId)
+                String.valueOf(githubId)
             );
         } else {
             users = jdbc.queryForList(
@@ -89,16 +90,17 @@ public class SecurityAlertController {
         if (users.isEmpty()) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN,
-                "No active application user is linked to this login"
+                "Your account is not linked to an active SecureHome user."
             );
         }
 
         Map<String, Object> user = users.get(0);
 
-        int userId = ((Number) user.get("user_id")).intValue();
         String email = user.get("email") == null
             ? ""
-            : String.valueOf(user.get("email")).trim().toLowerCase();
+            : String.valueOf(user.get("email"))
+                .trim()
+                .toLowerCase();
 
         String role = user.get("role_name") == null
             ? ""
@@ -108,21 +110,14 @@ public class SecurityAlertController {
             "ADMIN".equalsIgnoreCase(role)
             || PRIVILEGED_EMAILS.contains(email);
 
-        if (isAdmin) {
-            return repository.findAllByOrderByCreatedAtDesc();
+        if (!isAdmin) {
+            throw new ResponseStatusException(
+                HttpStatus.FORBIDDEN,
+                "You can't access these in this account. " +
+                "Security alerts are available only to administrators."
+            );
         }
 
-        List<Integer> alertIds = jdbc.query(
-            "SELECT alert_id FROM security_alerts " +
-            "WHERE recipient_user_id = ? " +
-            "ORDER BY created_at DESC",
-            (rs, rowNum) -> rs.getInt("alert_id"),
-            userId
-        );
-
-        return alertIds.stream()
-            .map(id -> repository.findById(id).orElse(null))
-            .filter(alert -> alert != null)
-            .toList();
+        return repository.findAllByOrderByCreatedAtDesc();
     }
 }

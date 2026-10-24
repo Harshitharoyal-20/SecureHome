@@ -11,6 +11,9 @@ const PRIVILEGED_EMAILS = [
   'pranawii0713@gmail.com'
 ];
 
+const ALERTS_DENIED_MESSAGE =
+  "You can't access these in this account. Security alerts are available only to administrators.";
+
 function normalize(value) {
   return String(value ?? '').trim().toLowerCase();
 }
@@ -43,6 +46,7 @@ async function readResponse(response) {
   if (response.status === 204) return null;
 
   const text = await response.text();
+
   if (!text) return null;
 
   try {
@@ -53,10 +57,17 @@ async function readResponse(response) {
 }
 
 function responseMessage(body, fallback) {
-  if (typeof body === 'string' && body.trim()) return body;
+  if (typeof body === 'string' && body.trim()) {
+    return body;
+  }
 
-  return body?.detail || body?.message || body?.error ||
-    body?.title || fallback;
+  return (
+    body?.detail ||
+    body?.message ||
+    body?.error ||
+    body?.title ||
+    fallback
+  );
 }
 
 function App() {
@@ -104,7 +115,9 @@ function App() {
 
     const headers = {
       Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.body
+        ? { 'Content-Type': 'application/json' }
+        : {}),
       ...options.headers
     };
 
@@ -117,14 +130,16 @@ function App() {
     const body = await readResponse(response);
 
     if (response.status === 401) {
-      throw new Error('Your session has expired. Please sign in again.');
+      throw new Error(
+        'Your session has expired. Please sign in again.'
+      );
     }
 
     if (response.status === 403) {
       throw new Error(
         responseMessage(
           body,
-          "You can't view this locker because you don't have permission."
+          "You can't access this resource with this account."
         )
       );
     }
@@ -148,6 +163,7 @@ function App() {
       if (!response.ok) return null;
 
       const user = await response.json();
+
       if (user.authenticated !== true) return null;
 
       const oauthAuthenticated = user.oauthAuthenticated === true;
@@ -183,32 +199,48 @@ function App() {
 
       if (results[0].status === 'fulfilled') {
         setLockers(
-          Array.isArray(results[0].value) ? results[0].value : []
+          Array.isArray(results[0].value)
+            ? results[0].value
+            : []
         );
       } else {
         setLockers([]);
-        setLockerError(results[0].reason?.message || 'Unable to load lockers.');
+        setLockerError(
+          results[0].reason?.message ||
+          'Unable to load lockers.'
+        );
       }
 
       if (results[1].status === 'fulfilled') {
         setAccessEvents(
-          Array.isArray(results[1].value) ? results[1].value : []
+          Array.isArray(results[1].value)
+            ? results[1].value
+            : []
         );
       } else {
         setAccessEvents([]);
         setAccessError(
-          results[1].reason?.message || 'Unable to load access history.'
+          results[1].reason?.message ||
+          'Unable to load access history.'
         );
       }
 
       if (results[2].status === 'fulfilled') {
         setSecurityAlerts(
-          Array.isArray(results[2].value) ? results[2].value : []
+          Array.isArray(results[2].value)
+            ? results[2].value
+            : []
         );
       } else {
         setSecurityAlerts([]);
+
+        const status = results[2].reason?.status;
+
         setAlertError(
-          results[2].reason?.message || 'Unable to load security alerts.'
+          status === 403
+            ? ALERTS_DENIED_MESSAGE
+            : results[2].reason?.message ||
+              'Unable to load security alerts.'
         );
       }
     } finally {
@@ -221,6 +253,7 @@ function App() {
 
     async function restoreSession() {
       const user = await checkSession();
+
       if (!active) return;
 
       if (user) {
@@ -308,7 +341,9 @@ function App() {
 
   function handleGitHubLogin() {
     setLoginError('');
-    window.location.assign(`${API}/oauth2/authorization/github`);
+    window.location.assign(
+      `${API}/oauth2/authorization/github`
+    );
   }
 
   async function logout() {
@@ -377,6 +412,7 @@ function App() {
       ownerUserId: String(asset.ownerUserId ?? ''),
       status: asset.status || 'ACTIVE'
     });
+
     setError('');
     setMessage('');
   }
@@ -395,8 +431,15 @@ function App() {
     const location = form.locationDescription.trim();
     const owner = Number(form.ownerUserId);
 
-    if (!name || !location || !Number.isInteger(owner) || owner <= 0) {
-      setError('Enter an asset name, location, and valid owner user ID.');
+    if (
+      !name ||
+      !location ||
+      !Number.isInteger(owner) ||
+      owner <= 0
+    ) {
+      setError(
+        'Enter an asset name, location, and valid owner user ID.'
+      );
       return;
     }
 
@@ -410,7 +453,9 @@ function App() {
 
     try {
       await apiFetch(
-        editingId === null ? '/api/lockers' : `/api/lockers/${editingId}`,
+        editingId === null
+          ? '/api/lockers'
+          : `/api/lockers/${editingId}`,
         credentials,
         {
           method: editingId === null ? 'POST' : 'PUT',
@@ -418,7 +463,12 @@ function App() {
         }
       );
 
-      setMessage(editingId === null ? 'Locker created.' : 'Locker updated.');
+      setMessage(
+        editingId === null
+          ? 'Locker created.'
+          : 'Locker updated.'
+      );
+
       resetLockerForm();
       await loadDashboard(credentials);
     } catch (err) {
@@ -438,9 +488,11 @@ function App() {
     setMessage('');
 
     try {
-      await apiFetch(`/api/lockers/${asset.assetId}`, credentials, {
-        method: 'DELETE'
-      });
+      await apiFetch(
+        `/api/lockers/${asset.assetId}`,
+        credentials,
+        { method: 'DELETE' }
+      );
 
       setMessage('Locker deleted.');
       await loadDashboard(credentials);
@@ -454,8 +506,10 @@ function App() {
 
     return lockers.filter((locker) =>
       normalize(locker.assetName).includes(term) &&
-      (typeFilter === 'ALL' || locker.assetType === typeFilter) &&
-      (statusFilter === 'ALL' || locker.status === statusFilter)
+      (typeFilter === 'ALL' ||
+        locker.assetType === typeFilter) &&
+      (statusFilter === 'ALL' ||
+        locker.status === statusFilter)
     );
   }, [lockers, search, typeFilter, statusFilter]);
 
@@ -465,6 +519,7 @@ function App() {
   );
 
   const safePage = Math.min(page, totalPages);
+
   const visibleLockers = filteredLockers.slice(
     (safePage - 1) * PAGE_SIZE,
     safePage * PAGE_SIZE
@@ -501,15 +556,20 @@ function App() {
             />
 
             {loginError && (
-              <p className="error" role="alert">{loginError}</p>
+              <p className="error" role="alert">
+                {loginError}
+              </p>
             )}
 
             <button type="submit" disabled={verifyingPassword}>
-              {verifyingPassword ? 'Signing in...' : 'Sign in with Email'}
+              {verifyingPassword
+                ? 'Signing in...'
+                : 'Sign in with Email'}
             </button>
           </form>
 
           <p>Or continue using GitHub</p>
+
           <button type="button" onClick={handleGitHubLogin}>
             Sign in with GitHub
           </button>
@@ -525,19 +585,48 @@ function App() {
         <p className="side-subtitle">SMART SECURITY SYSTEM</p>
 
         <nav>
-          <a href="#dashboard" onClick={() => setActiveSection('dashboard')}>Dashboard</a>
-          <a href="#lockers" onClick={() => setActiveSection('lockers')}>My Lockers</a>
-          <a href="#access" onClick={() => setActiveSection('access')}>Access History</a>
-          <a href="#alerts" onClick={() => setActiveSection('alerts')}>Security Alerts</a>
+          <a
+            href="#dashboard"
+            onClick={() => setActiveSection('dashboard')}
+          >
+            Dashboard
+          </a>
+
+          <a
+            href="#lockers"
+            onClick={() => setActiveSection('lockers')}
+          >
+            My Lockers
+          </a>
+
+          <a
+            href="#access"
+            onClick={() => setActiveSection('access')}
+          >
+            Access History
+          </a>
+
+          <a
+            href="#alerts"
+            onClick={() => setActiveSection('alerts')}
+          >
+            Security Alerts
+          </a>
+
           {isAdmin && (
-            <a href="#admin-permissions" onClick={() => setActiveSection('admin-permissions')}>
+            <a
+              href="#admin-permissions"
+              onClick={() => setActiveSection('admin-permissions')}
+            >
               Admin Permissions
             </a>
           )}
         </nav>
 
         <div className="sidebar-bottom">
-          {isAdmin ? 'Administrator Access' : 'Family / User Access'}
+          {isAdmin
+            ? 'Administrator Access'
+            : 'Family / User Access'}
         </div>
       </aside>
 
@@ -546,13 +635,23 @@ function App() {
           <div>
             <p className="eyebrow">PRIVATE ROOM PROTECTION</p>
             <h1>Security Dashboard</h1>
-            <p className="muted">Monitor your private room and smart lockers.</p>
-            <p className="muted">Signed in as: {credentials.username}</p>
             <p className="muted">
-              Account type: {isAdmin ? 'Administrator Access' : 'Family / User Access'}
+              Monitor your private room and smart lockers.
+            </p>
+            <p className="muted">
+              Signed in as: {credentials.username}
+            </p>
+            <p className="muted">
+              Account type:{' '}
+              {isAdmin
+                ? 'Administrator Access'
+                : 'Family / User Access'}
             </p>
           </div>
-          <button type="button" onClick={logout}>Log Out</button>
+
+          <button type="button" onClick={logout}>
+            Log Out
+          </button>
         </header>
 
         <section className="welcome">
@@ -565,6 +664,7 @@ function App() {
                 : 'View secure assets your account is authorized to access.'}
             </p>
           </div>
+
           <div className="shield">◆</div>
         </section>
 
@@ -573,10 +673,16 @@ function App() {
             <p>Accessible Secure Assets</p>
             <h2>{lockers.length}</h2>
           </article>
+
           <article className="stat-card">
             <p>Active Assets</p>
-            <h2>{lockers.filter((asset) => asset.status === 'ACTIVE').length}</h2>
+            <h2>
+              {lockers.filter(
+                (asset) => asset.status === 'ACTIVE'
+              ).length}
+            </h2>
           </article>
+
           <article className="stat-card">
             <p>Protected Location</p>
             <h2>Private Room</h2>
@@ -587,78 +693,187 @@ function App() {
           <div className="section-heading">
             <div>
               <h2>My Secure Assets</h2>
-              <p className="muted">Locker records available to your account.</p>
+              <p className="muted">
+                Locker records available to your account.
+              </p>
             </div>
+
             <div className="action-row">
-              <button type="button" disabled={loading} onClick={() => loadDashboard(credentials)}>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => loadDashboard(credentials)}
+              >
                 {loading ? 'Loading...' : 'Refresh'}
               </button>
-              {isAdmin && <button type="button" onClick={startCreate}>Add Locker</button>}
+
+              {isAdmin && (
+                <button type="button" onClick={startCreate}>
+                  Add Locker
+                </button>
+              )}
             </div>
           </div>
 
-          {error && <p className="error" role="alert">{error}</p>}
-          {message && <p className="success" role="status">{message}</p>}
-          {lockerError && <p className="error" role="alert">{lockerError}</p>}
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+
+          {message && (
+            <p className="success" role="status">
+              {message}
+            </p>
+          )}
+
+          {lockerError && (
+            <p className="error" role="alert">
+              {lockerError}
+            </p>
+          )}
 
           {isAdmin && (
             <form className="locker-form" onSubmit={saveLocker}>
-              <h3>{editingId === null ? 'Add a Locker' : `Edit Locker #${editingId}`}</h3>
+              <h3>
+                {editingId === null
+                  ? 'Add a Locker'
+                  : `Edit Locker #${editingId}`}
+              </h3>
 
               <label htmlFor="assetName">Asset name</label>
-              <input id="assetName" required maxLength={100} value={form.assetName}
-                onChange={(event) => setForm({ ...form, assetName: event.target.value })} />
+              <input
+                id="assetName"
+                required
+                maxLength={100}
+                value={form.assetName}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    assetName: event.target.value
+                  })
+                }
+              />
 
               <label htmlFor="assetType">Asset type</label>
-              <select id="assetType" value={form.assetType}
-                onChange={(event) => setForm({ ...form, assetType: event.target.value })}>
+              <select
+                id="assetType"
+                value={form.assetType}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    assetType: event.target.value
+                  })
+                }
+              >
                 <option value="LOCKER">Locker</option>
                 <option value="SAFE">Safe</option>
               </select>
 
               <label htmlFor="location">Location</label>
-              <input id="location" required maxLength={255}
+              <input
+                id="location"
+                required
+                maxLength={255}
                 value={form.locationDescription}
-                onChange={(event) => setForm({ ...form, locationDescription: event.target.value })} />
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    locationDescription: event.target.value
+                  })
+                }
+              />
 
               <label htmlFor="owner">Owner user ID</label>
-              <input id="owner" type="number" min="1" step="1" required
+              <input
+                id="owner"
+                type="number"
+                min="1"
+                step="1"
+                required
                 value={form.ownerUserId}
-                onChange={(event) => setForm({ ...form, ownerUserId: event.target.value })} />
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    ownerUserId: event.target.value
+                  })
+                }
+              />
 
               <label htmlFor="status">Status</label>
-              <select id="status" value={form.status}
-                onChange={(event) => setForm({ ...form, status: event.target.value })}>
+              <select
+                id="status"
+                value={form.status}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    status: event.target.value
+                  })
+                }
+              >
                 <option value="ACTIVE">Active</option>
                 <option value="INACTIVE">Inactive</option>
               </select>
 
               <div className="action-row">
-                <button type="submit">{editingId === null ? 'Create' : 'Save Changes'}</button>
+                <button type="submit">
+                  {editingId === null
+                    ? 'Create'
+                    : 'Save Changes'}
+                </button>
+
                 {editingId !== null && (
-                  <button type="button" onClick={resetLockerForm}>Cancel Edit</button>
+                  <button
+                    type="button"
+                    onClick={resetLockerForm}
+                  >
+                    Cancel Edit
+                  </button>
                 )}
               </div>
             </form>
           )}
 
           {!isAdmin && (
-            <p className="muted">View-only access. Locker management is restricted to authorized accounts.</p>
+            <p className="muted">
+              View-only access. Locker management is restricted to
+              authorized accounts.
+            </p>
           )}
 
           <div className="locker-controls">
-            <input type="search" placeholder="Search by locker name..." aria-label="Search lockers"
-              value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} />
+            <input
+              type="search"
+              placeholder="Search by locker name..."
+              aria-label="Search lockers"
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+            />
 
-            <select aria-label="Filter by type" value={typeFilter}
-              onChange={(event) => { setTypeFilter(event.target.value); setPage(1); }}>
+            <select
+              aria-label="Filter by type"
+              value={typeFilter}
+              onChange={(event) => {
+                setTypeFilter(event.target.value);
+                setPage(1);
+              }}
+            >
               <option value="ALL">All Types</option>
               <option value="LOCKER">Lockers</option>
               <option value="SAFE">Safes</option>
             </select>
 
-            <select aria-label="Filter by status" value={statusFilter}
-              onChange={(event) => { setStatusFilter(event.target.value); setPage(1); }}>
+            <select
+              aria-label="Filter by status"
+              value={statusFilter}
+              onChange={(event) => {
+                setStatusFilter(event.target.value);
+                setPage(1);
+              }}
+            >
               <option value="ALL">All Statuses</option>
               <option value="ACTIVE">Active</option>
               <option value="INACTIVE">Inactive</option>
@@ -669,19 +884,45 @@ function App() {
 
           <div className="asset-grid">
             {visibleLockers.map((locker) => (
-              <article className="asset-card" key={locker.assetId}>
+              <article
+                className="asset-card"
+                key={locker.assetId}
+              >
                 <div className="asset-top">
-                  <span>{locker.assetType === 'SAFE' ? '▤' : '▣'}</span>
-                  <span className={`active-badge ${normalize(locker.status)}`}>{locker.status}</span>
+                  <span>
+                    {locker.assetType === 'SAFE' ? '▤' : '▣'}
+                  </span>
+
+                  <span
+                    className={`active-badge ${normalize(locker.status)}`}
+                  >
+                    {locker.status}
+                  </span>
                 </div>
+
                 <h3>{locker.assetName}</h3>
                 <p className="muted">{locker.assetType}</p>
                 <p>{locker.locationDescription}</p>
-                <p>Asset ID: {locker.assetId} · Owner: {locker.ownerUserId}</p>
+                <p>
+                  Asset ID: {locker.assetId} · Owner:{' '}
+                  {locker.ownerUserId}
+                </p>
+
                 {isAdmin && (
                   <div className="action-row">
-                    <button type="button" onClick={() => startEdit(locker)}>Edit</button>
-                    <button type="button" onClick={() => deleteLocker(locker)}>Delete</button>
+                    <button
+                      type="button"
+                      onClick={() => startEdit(locker)}
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => deleteLocker(locker)}
+                    >
+                      Delete
+                    </button>
                   </div>
                 )}
               </article>
@@ -689,19 +930,41 @@ function App() {
           </div>
 
           {visibleLockers.length === 0 && (
-            <p>
+            <p role={lockerError ? 'alert' : 'status'}>
               {lockerError
-                ? "You can't view this locker because you don't have permission."
-                : 'No matching lockers found. If access was just granted, refresh this page.'}
+                ? lockerError
+                : loading
+                  ? 'Loading your permitted lockers...'
+                  : 'No accessible lockers found. Check that your permission is active, assigned to your account, and within its validity period.'}
             </p>
           )}
 
           <div className="pagination">
-            <button type="button" disabled={safePage <= 1}
-              onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
-            <span>Page {safePage} of {totalPages}</span>
-            <button type="button" disabled={safePage >= totalPages}
-              onClick={() => setPage((current) => Math.min(totalPages, current + 1))}>Next</button>
+            <button
+              type="button"
+              disabled={safePage <= 1}
+              onClick={() =>
+                setPage((current) => Math.max(1, current - 1))
+              }
+            >
+              Previous
+            </button>
+
+            <span>
+              Page {safePage} of {totalPages}
+            </span>
+
+            <button
+              type="button"
+              disabled={safePage >= totalPages}
+              onClick={() =>
+                setPage((current) =>
+                  Math.min(totalPages, current + 1)
+                )
+              }
+            >
+              Next
+            </button>
           </div>
         </section>
 
@@ -711,47 +974,91 @@ function App() {
             <p className="muted">
               Grant or revoke locker access for a selected time period.
             </p>
-            <AdminAccessPanel apiFetch={apiFetch} credentials={credentials} />
+
+            <AdminAccessPanel
+              apiFetch={apiFetch}
+              credentials={credentials}
+            />
           </section>
         )}
 
         <section className="lower-grid">
           <article className="panel" id="access">
             <h2>Access History</h2>
-            {accessError && <p className="error" role="alert">{accessError}</p>}
+
+            {accessError && (
+              <p className="error" role="alert">
+                {accessError}
+              </p>
+            )}
 
             {accessEvents.map((event, index) => {
-              const decision = event.decision ?? event.access_decision ?? 'UNKNOWN';
-              const eventId = event.eventId ?? event.event_id ?? 'N/A';
-              const eventTime = event.eventTime ?? event.event_time;
+              const decision =
+                event.decision ??
+                event.access_decision ??
+                'UNKNOWN';
+
+              const eventId =
+                event.eventId ?? event.event_id ?? 'N/A';
+
+              const eventTime =
+                event.eventTime ?? event.event_time;
 
               return (
-                <div className="access-item" key={eventId === 'N/A' ? index : eventId}>
+                <div
+                  className="access-item"
+                  key={eventId === 'N/A' ? index : eventId}
+                >
                   <div>
                     <strong>Event #{eventId}</strong>
-                    <p>User: {event.userId ?? event.user_id ?? 'Unknown'} · Asset: {event.assetId ?? event.asset_id ?? 'N/A'}</p>
+                    <p>
+                      User: {event.userId ?? event.user_id ?? 'Unknown'}
+                      {' · '}
+                      Asset: {event.assetId ?? event.asset_id ?? 'N/A'}
+                    </p>
                     <p>Decision: {decision}</p>
-                    <p>Reason: {event.reason ?? 'Not specified'}</p>
-                    <small>{eventTime ? new Date(eventTime).toLocaleString() : 'Time unavailable'}</small>
+                    <p>
+                      Reason: {event.reason ?? 'Not specified'}
+                    </p>
+                    <small>
+                      {eventTime
+                        ? new Date(eventTime).toLocaleString()
+                        : 'Time unavailable'}
+                    </small>
                   </div>
-                  <span className={`status-badge ${normalize(decision)}`}>{decision}</span>
+
+                  <span
+                    className={`status-badge ${normalize(decision)}`}
+                  >
+                    {decision}
+                  </span>
                 </div>
               );
             })}
 
             {accessEvents.length === 0 && (
               <p role={accessError ? 'alert' : 'status'}>
-                {loading ? 'Loading access history...' : accessError || 'No access history available for this account.'}
+                {loading
+                  ? 'Loading access history...'
+                  : accessError ||
+                    'No access history available for this account.'}
               </p>
             )}
           </article>
 
           <article className="panel" id="alerts">
             <h2>Security Alerts</h2>
-            {alertError && <p className="error" role="alert">{alertError}</p>}
+
+            {alertError && (
+              <p className="error" role="alert">
+                {alertError}
+              </p>
+            )}
 
             {securityAlerts.map((alert, index) => {
-              const alertId = alert.alertId ?? alert.alert_id ?? index;
+              const alertId =
+                alert.alertId ?? alert.alert_id ?? index;
+
               const severity = alert.severity ?? 'UNKNOWN';
 
               return (
@@ -759,29 +1066,52 @@ function App() {
                   <div>
                     <strong>Alert #{alertId}</strong>
                     <p>Severity: {severity}</p>
-                    <p>{alert.message ?? alert.alertMessage ?? alert.alert_message ?? 'No message provided'}</p>
-                    <p>Event ID: {alert.eventId ?? alert.event_id ?? 'N/A'} · Recipient: {alert.recipientUserId ?? alert.recipient_user_id ?? 'N/A'}</p>
+                    <p>
+                      {alert.message ??
+                        alert.alertMessage ??
+                        alert.alert_message ??
+                        'No message provided'}
+                    </p>
+                    <p>
+                      Event ID: {alert.eventId ?? alert.event_id ?? 'N/A'}
+                      {' · '}
+                      Recipient:{' '}
+                      {alert.recipientUserId ??
+                        alert.recipient_user_id ??
+                        'N/A'}
+                    </p>
                     <p>Status: {alert.status ?? 'N/A'}</p>
                   </div>
-                  <span className={`status-badge ${normalize(severity)}`}>{severity}</span>
+
+                  <span
+                    className={`status-badge ${normalize(severity)}`}
+                  >
+                    {severity}
+                  </span>
                 </div>
               );
             })}
 
             {securityAlerts.length === 0 && (
               <p role={alertError ? 'alert' : 'status'}>
-                {loading ? 'Loading security alerts...' : alertError || 'No security alerts available for this account.'}
+                {alertError
+                  ? alertError
+                  : loading
+                    ? 'Loading security alerts...'
+                    : 'No security alerts available for this account.'}
               </p>
             )}
 
             <p className="muted">
-              Denied access attempts should be recorded by the backend and shown here when an alert is available to your account.
+              Security alerts are available only to authorized
+              administrators. Other accounts cannot access alert records.
             </p>
           </article>
         </section>
 
         <footer>
-          SecureHome · Context-Aware Biometric Private Room and Smart Locker Security System
+          SecureHome · Context-Aware Biometric Private Room and Smart
+          Locker Security System
         </footer>
       </main>
     </div>

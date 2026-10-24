@@ -30,13 +30,50 @@ public class SecureAssetController {
     );
 
     private final SecureAssetRepository repository;
-    private final JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbc;
 
     public SecureAssetController(
             SecureAssetRepository repository,
-            JdbcTemplate jdbcTemplate) {
+            JdbcTemplate jdbc) {
         this.repository = repository;
-        this.jdbcTemplate = jdbcTemplate;
+        this.jdbc = jdbc;
+    }
+
+    private int getUserId(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()
+                || "anonymousUser".equals(String.valueOf(auth.getPrincipal()))) {
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Please log in first."
+            );
+        }
+
+        if (auth.getPrincipal() instanceof OAuth2User oauth) {
+            Object githubId = oauth.getAttribute("id");
+
+            if (githubId != null) {
+                List<Integer> ids = jdbc.query(
+                    "SELECT u.user_id " +
+                    "FROM oauth_account_links o " +
+                    "JOIN users u ON u.user_id = o.user_id " +
+                    "WHERE LOWER(o.provider) = 'github' " +
+                    "AND o.provider_user_id = ? " +
+                    "AND u.status = 'ACTIVE' " +
+                    "LIMIT 1",
+                    (rs, rowNum) -> rs.getInt("user_id"),
+                    String.valueOf(githubId)
+                );
+
+                if (!ids.isEmpty()) {
+                    return ids.get(0);
+                }
+            }
+        }
+
+        throw new ResponseStatusException(
+            HttpStatus.FORBIDDEN,
+            "Your GitHub account is not linked to an active SecureHome user."
+        );
     }
 
     private String findUserEmail(Authentication auth) {
@@ -44,41 +81,29 @@ public class SecureAssetController {
             return null;
         }
 
-        if (auth.getPrincipal() instanceof OAuth2User oauthUser) {
-            Object providerId = oauthUser.getAttribute("id");
+        if (auth.getPrincipal() instanceof OAuth2User oauth) {
+            Object githubId = oauth.getAttribute("id");
 
-            if (providerId != null) {
-                List<String> linkedEmails = jdbcTemplate.query(
-                    "SELECT u.email FROM oauth_account_links o " +
+            if (githubId != null) {
+                List<String> emails = jdbc.query(
+                    "SELECT u.email " +
+                    "FROM oauth_account_links o " +
                     "JOIN users u ON u.user_id = o.user_id " +
-                    "WHERE o.provider = 'github' " +
+                    "WHERE LOWER(o.provider) = 'github' " +
                     "AND o.provider_user_id = ? " +
-                    "AND u.status = 'ACTIVE' LIMIT 1",
+                    "AND u.status = 'ACTIVE' " +
+                    "LIMIT 1",
                     (rs, rowNum) -> rs.getString("email"),
-                    String.valueOf(providerId)
+                    String.valueOf(githubId)
                 );
 
-                if (!linkedEmails.isEmpty()) {
-                    return linkedEmails.get(0);
+                if (!emails.isEmpty()) {
+                    return emails.get(0);
                 }
-            }
-
-            Object oauthEmail = oauthUser.getAttribute("email");
-
-            if (oauthEmail != null) {
-                return String.valueOf(oauthEmail);
             }
         }
 
-        List<String> emails = jdbcTemplate.query(
-            "SELECT email FROM users " +
-            "WHERE LOWER(email) = LOWER(?) " +
-            "AND status = 'ACTIVE' LIMIT 1",
-            (rs, rowNum) -> rs.getString("email"),
-            auth.getName()
-        );
-
-        return emails.isEmpty() ? null : emails.get(0);
+        return null;
     }
 
     private boolean isAdmin(Authentication auth) {
@@ -86,75 +111,43 @@ public class SecureAssetController {
             return false;
         }
 
-        boolean hasAdminRole = auth.getAuthorities().stream()
-            .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
-
-        if (hasAdminRole) {
+        if (auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()))) {
             return true;
         }
 
         String email = findUserEmail(auth);
 
-        return email != null &&
-            PRIVILEGED_EMAILS.contains(email.toLowerCase().trim());
+        return email != null
+            && PRIVILEGED_EMAILS.contains(email.trim().toLowerCase());
     }
 
     private void requireAdmin(Authentication auth) {
         if (!isAdmin(auth)) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN,
-                "Only administrators can modify lockers"
+                "Only administrators can modify lockers."
             );
         }
-    }
-
-    private int getUserId(Authentication auth) {
-        if (auth == null || !auth.isAuthenticated()) {
-            throw new ResponseStatusException(
-                HttpStatus.UNAUTHORIZED,
-                "Login required"
-            );
-        }
-
-        String email = findUserEmail(auth);
-
-        if (email != null) {
-            List<Integer> ids = jdbcTemplate.query(
-                "SELECT user_id FROM users " +
-                "WHERE LOWER(email) = LOWER(?) " +
-                "AND status = 'ACTIVE' LIMIT 1",
-                (rs, rowNum) -> rs.getInt("user_id"),
-                email
-            );
-
-            if (!ids.isEmpty()) {
-                return ids.get(0);
-            }
-        }
-
-        throw new ResponseStatusException(
-            HttpStatus.FORBIDDEN,
-            "Active SecureHome user not found for this login"
-        );
     }
 
     private boolean hasAccess(Integer assetId, int userId) {
-        Integer count = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM secure_assets s " +
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) " +
+            "FROM secure_assets s " +
             "WHERE s.asset_id = ? " +
             "AND s.status = 'ACTIVE' " +
             "AND (" +
-            "s.owner_user_id = ? OR EXISTS (" +
+            "s.owner_user_id = ? " +
+            "OR EXISTS (" +
             "SELECT 1 FROM asset_permissions p " +
             "WHERE p.asset_id = s.asset_id " +
             "AND p.user_id = ? " +
             "AND p.is_active = 1 " +
             "AND p.valid_from IS NOT NULL " +
             "AND p.valid_until IS NOT NULL " +
-            "AND NOW() >= p.valid_from " +
-            "AND NOW() <= p.valid_until " +
-            "AND CURRENT_TIME >= p.allowed_start " +
-            "AND CURRENT_TIME <= p.allowed_end" +
+            "AND NOW() BETWEEN p.valid_from AND p.valid_until " +
+            "AND CURRENT_TIME BETWEEN p.allowed_start AND p.allowed_end" +
             "))",
             Integer.class,
             assetId,
@@ -170,7 +163,7 @@ public class SecureAssetController {
         if (auth == null || !auth.isAuthenticated()) {
             throw new ResponseStatusException(
                 HttpStatus.UNAUTHORIZED,
-                "Login required"
+                "Please log in first."
             );
         }
 
@@ -193,20 +186,20 @@ public class SecureAssetController {
         if (auth == null || !auth.isAuthenticated()) {
             throw new ResponseStatusException(
                 HttpStatus.UNAUTHORIZED,
-                "Login required"
+                "Please log in first."
             );
         }
 
         SecureAsset asset = repository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND,
-                "Locker not found"
+                "Locker not found."
             ));
 
         if (!"ACTIVE".equalsIgnoreCase(asset.getStatus())) {
             throw new ResponseStatusException(
                 HttpStatus.NOT_FOUND,
-                "Locker is inactive"
+                "This locker is inactive."
             );
         }
 
@@ -216,7 +209,7 @@ public class SecureAssetController {
             if (!hasAccess(id, userId)) {
                 throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
-                    "You can't view this locker because you don't have permission."
+                    "You can't access this locker with this account."
                 );
             }
         }
@@ -242,11 +235,11 @@ public class SecureAssetController {
         if (asset.getOwnerUserId() == null) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                "Owner is required"
+                "Owner is required."
             );
         }
 
-        Integer count = jdbcTemplate.queryForObject(
+        Integer count = jdbc.queryForObject(
             "SELECT COUNT(*) FROM users " +
             "WHERE user_id = ? AND status = 'ACTIVE'",
             Integer.class,
@@ -256,7 +249,7 @@ public class SecureAssetController {
         if (count == null || count == 0) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                "Active owner not found"
+                "Active owner not found."
             );
         }
 
@@ -274,7 +267,7 @@ public class SecureAssetController {
         SecureAsset existing = repository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND,
-                "Locker not found"
+                "Locker not found."
             ));
 
         existing.setAssetName(input.getAssetName().trim());
@@ -285,7 +278,7 @@ public class SecureAssetController {
         existing.setStatus(input.getStatus().trim().toUpperCase());
 
         if (input.getOwnerUserId() != null) {
-            Integer count = jdbcTemplate.queryForObject(
+            Integer count = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM users " +
                 "WHERE user_id = ? AND status = 'ACTIVE'",
                 Integer.class,
@@ -295,7 +288,7 @@ public class SecureAssetController {
             if (count == null || count == 0) {
                 throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "Active owner not found"
+                    "Active owner not found."
                 );
             }
 
@@ -316,7 +309,7 @@ public class SecureAssetController {
         SecureAsset existing = repository.findById(id)
             .orElseThrow(() -> new ResponseStatusException(
                 HttpStatus.NOT_FOUND,
-                "Locker not found"
+                "Locker not found."
             ));
 
         try {
@@ -325,8 +318,7 @@ public class SecureAssetController {
         } catch (DataIntegrityViolationException ex) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
-                "This locker has related records. " +
-                "Set its status to INACTIVE instead."
+                "This locker has related records. Set its status to INACTIVE instead."
             );
         }
     }
