@@ -161,6 +161,8 @@ function App() {
   const [typeFilter, setTypeFilter] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [page, setPage] = useState(1);
+  const [permPage, setPermPage] = useState(1);
+  const PERM_PAGE_SIZE = 4;
   const [activeSection, setActiveSection] = useState('dashboard');
   const [editingId, setEditingId] = useState(null);
 
@@ -695,6 +697,71 @@ function App() {
     safePage * PAGE_SIZE
   );
 
+  const totalPermPages = Math.max(
+    1,
+    Math.ceil(myPermissions.length / PERM_PAGE_SIZE)
+  );
+
+  const safePermPage = Math.min(permPage, totalPermPages);
+
+  const visibleMyPermissions = myPermissions.slice(
+    (safePermPage - 1) * PERM_PAGE_SIZE,
+    safePermPage * PERM_PAGE_SIZE
+  );
+
+  const currentlyActiveAccess = useMemo(() => {
+    if (activeAccessList && activeAccessList.length > 0) {
+      return activeAccessList;
+    }
+    if (!isAdmin && myPermissions && myPermissions.length > 0) {
+      return myPermissions
+        .filter((p) => getCurrentStatus(p) === 'Active')
+        .map((p) => ({
+          assetId: p.assetId ?? p.asset_id,
+          assetName: p.assetName ?? p.asset_name,
+          assetType: p.assetType ?? p.asset_type ?? 'LOCKER',
+          location: p.location ?? p.location_description ?? 'Private Room',
+          validFrom: p.validFrom ?? p.valid_from,
+          validUntil: p.validUntil ?? p.valid_until,
+          activeNow: 1
+        }));
+    }
+    if (isAdmin && lockers && lockers.length > 0) {
+      return lockers.map((l) => ({
+        assetId: l.assetId,
+        assetName: l.assetName,
+        assetType: l.assetType,
+        location: l.locationDescription,
+        validFrom: null,
+        validUntil: null,
+        activeNow: 1
+      }));
+    }
+    return [];
+  }, [activeAccessList, myPermissions, isAdmin, lockers]);
+
+  const displayedAccessEvents = useMemo(() => {
+    if (accessEvents && accessEvents.length > 0) {
+      return accessEvents;
+    }
+    if (!isAdmin && myPermissions && myPermissions.length > 0) {
+      return myPermissions.map((p, idx) => ({
+        eventId: `P-${p.permissionId ?? p.permission_id ?? idx + 1}`,
+        assetId: p.assetId ?? p.asset_id,
+        assetName: p.assetName ?? p.asset_name ?? 'Locker',
+        assetType: p.assetType ?? p.asset_type ?? 'LOCKER',
+        location: p.location ?? p.location_description ?? 'Private Room',
+        decision: getCurrentStatus(p) === 'Active' ? 'ALLOWED' : (getCurrentStatus(p) === 'Revoked' ? 'REVOKED' : 'EXPIRED'),
+        reason: 'Authorized Locker Access (Approved by Administrator)',
+        eventTime: p.validFrom ?? p.valid_from ?? new Date().toISOString(),
+        validFrom: p.validFrom ?? p.valid_from,
+        validUntil: p.validUntil ?? p.valid_until,
+        activeNow: getCurrentStatus(p) === 'Active' ? 1 : 0
+      }));
+    }
+    return [];
+  }, [accessEvents, myPermissions, isAdmin]);
+
   if (!credentials || !passwordVerified) {
     return (
       <main className="login-page">
@@ -1227,36 +1294,60 @@ function App() {
             </div>
 
             {myPermissions.length > 0 ? (
-              <div className="permission-cards-grid">
-                {myPermissions.map((perm, idx) => {
-                  const permId = perm.permissionId ?? perm.permission_id ?? idx;
-                  const assetName = perm.assetName ?? perm.asset_name ?? 'Locker';
-                  const assetType = perm.assetType ?? perm.asset_type ?? 'LOCKER';
-                  const location = perm.location ?? perm.location_description ?? 'Private Room';
-                  const from = formatDate(perm.validFrom ?? perm.valid_from);
-                  const until = formatDate(perm.validUntil ?? perm.valid_until);
-                  const status = getCurrentStatus(perm);
+              <>
+                <div className="permission-cards-grid">
+                  {visibleMyPermissions.map((perm, idx) => {
+                    const permId = perm.permissionId ?? perm.permission_id ?? idx;
+                    const assetName = perm.assetName ?? perm.asset_name ?? 'Locker';
+                    const assetType = perm.assetType ?? perm.asset_type ?? 'LOCKER';
+                    const location = perm.location ?? perm.location_description ?? 'Private Room';
+                    const from = formatDate(perm.validFrom ?? perm.valid_from);
+                    const until = formatDate(perm.validUntil ?? perm.valid_until);
+                    const status = getCurrentStatus(perm);
 
-                  return (
-                    <div className="granted-perm-card" key={permId}>
-                      <div className="perm-header">
-                        <span className="perm-icon">{assetType === 'SAFE' ? '▤' : '▣'}</span>
-                        <span className={`perm-badge ${status.toLowerCase()}`}>{status}</span>
+                    return (
+                      <div className="granted-perm-card" key={permId}>
+                        <div className="perm-header">
+                          <span className="perm-icon">{assetType === 'SAFE' ? '▤' : '▣'}</span>
+                          <span className={`perm-badge ${status.toLowerCase()}`}>{status}</span>
+                        </div>
+                        <h3>{assetName}</h3>
+                        <p className="muted">{assetType} · {location}</p>
+                        <div className="perm-timing">
+                          <p><strong>Starts (IST):</strong> {from}</p>
+                          <p><strong>Expires (IST):</strong> {until}</p>
+                        </div>
+                        <div className="perm-level">
+                          <span className="perm-tag">✓ Authorized Access</span>
+                          <span className="perm-note">Approved by Administrator</span>
+                        </div>
                       </div>
-                      <h3>{assetName}</h3>
-                      <p className="muted">{assetType} · {location}</p>
-                      <div className="perm-timing">
-                        <p><strong>Starts (IST):</strong> {from}</p>
-                        <p><strong>Expires (IST):</strong> {until}</p>
-                      </div>
-                      <div className="perm-level">
-                        <span className="perm-tag">✓ Authorized Access</span>
-                        <span className="perm-note">Approved by Administrator</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+
+                {myPermissions.length > PERM_PAGE_SIZE && (
+                  <div className="pagination">
+                    <button
+                      type="button"
+                      disabled={safePermPage <= 1}
+                      onClick={() => setPermPage((curr) => Math.max(1, curr - 1))}
+                    >
+                      Previous
+                    </button>
+                    <span>
+                      Page {safePermPage} of {totalPermPages} ({myPermissions.length} total)
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safePermPage >= totalPermPages}
+                      onClick={() => setPermPage((curr) => Math.min(totalPermPages, curr + 1))}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
             ) : (
               <p className="muted">
                 {loading
@@ -1283,8 +1374,8 @@ function App() {
 
         <section className="lower-grid">
           <article className="panel access-history-panel" id="access">
-            <div className="section-heading">
-              <div>
+            <div className="access-history-header">
+              <div className="access-history-title-wrap">
                 <h2>Access History</h2>
                 <p className="muted">
                   {isAdmin
@@ -1296,6 +1387,7 @@ function App() {
               </div>
               <button
                 type="button"
+                className="access-refresh-btn"
                 disabled={loading}
                 onClick={() => loadDashboard(credentials)}
               >
@@ -1309,9 +1401,9 @@ function App() {
                 <span className="live-dot" aria-hidden="true"></span>
                 <h3>Currently Accessing (Active in Your Account)</h3>
               </div>
-              {activeAccessList.length > 0 ? (
+              {currentlyActiveAccess.length > 0 ? (
                 <div className="currently-active-grid">
-                  {activeAccessList.map((asset, idx) => (
+                  {currentlyActiveAccess.map((asset, idx) => (
                     <div className="active-access-chip" key={asset.assetId || idx}>
                       <span className="chip-icon">{asset.assetType === 'SAFE' ? '▤' : '▣'}</span>
                       <div className="chip-details">
@@ -1334,21 +1426,17 @@ function App() {
               )}
             </div>
 
-            {/* Past Access Events & Verification History */}
-            <div className="access-events-section">
-              <div className="box-title-row">
-                <h3>Access Events & Period History</h3>
-              </div>
+            {/* Access Events & History */}
+            {accessError && (
+              <p className="error" role="alert">
+                {accessError}
+              </p>
+            )}
 
-              {accessError && (
-                <p className="error" role="alert">
-                  {accessError}
-                </p>
-              )}
-
-              {accessEvents.length > 0 ? (
+            {displayedAccessEvents.length > 0 && (
+              <div className="access-events-section">
                 <div className="access-cards-list">
-                  {accessEvents.map((event, index) => {
+                  {displayedAccessEvents.map((event, index) => {
                     const decision =
                       event.decision ??
                       event.access_decision ??
@@ -1441,17 +1529,8 @@ function App() {
                     );
                   })}
                 </div>
-              ) : (
-                <p role={accessError ? 'alert' : 'status'}>
-                  {loading
-                    ? 'Loading access history...'
-                    : accessError ||
-                      (isAdmin
-                        ? 'No access history recorded yet.'
-                        : 'No access history recorded for your account.')}
-                </p>
-              )}
-            </div>
+              </div>
+            )}
           </article>
 
           <article className="panel" id="alerts">

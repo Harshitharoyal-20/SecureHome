@@ -136,7 +136,7 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [page, setPage] = useState(1);
-  const pageSize = 5;
+  const pageSize = 4;
 
   const load = useCallback(async () => {
     setLoading(true);

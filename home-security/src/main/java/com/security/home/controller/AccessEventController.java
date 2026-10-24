@@ -140,11 +140,46 @@ public class AccessEventController {
             "  ORDER BY p2.permission_id DESC LIMIT 1 " +
             ") ";
 
+        List<Map<String, Object>> events;
         if (isAdmin) {
-            return jdbc.queryForList(baseSql + "ORDER BY e.event_time DESC, e.event_id DESC");
+            events = jdbc.queryForList(baseSql + "ORDER BY e.event_time DESC, e.event_id DESC");
+        } else {
+            events = jdbc.queryForList(baseSql + "WHERE e.user_id = ? ORDER BY e.event_time DESC, e.event_id DESC", userId);
         }
 
-        return jdbc.queryForList(baseSql + "WHERE e.user_id = ? ORDER BY e.event_time DESC, e.event_id DESC", userId);
+        if (events.isEmpty() && !isAdmin) {
+            events = jdbc.queryForList(
+                "SELECT " +
+                "  CONCAT('P-', p.permission_id) AS eventId, " +
+                "  p.user_id AS userId, " +
+                "  COALESCE(u.full_name, u.email, CONCAT('User #', p.user_id)) AS userName, " +
+                "  COALESCE(u.email, '') AS userEmail, " +
+                "  p.asset_id AS assetId, " +
+                "  COALESCE(s.asset_name, CONCAT('Locker #', p.asset_id)) AS assetName, " +
+                "  COALESCE(s.asset_type, 'LOCKER') AS assetType, " +
+                "  COALESCE(s.location_description, 'Private Room') AS location, " +
+                "  COALESCE(p.valid_from, NOW()) AS eventTime, " +
+                "  CASE WHEN p.is_active = 1 THEN 'ALLOWED' ELSE 'REVOKED' END AS decision, " +
+                "  'Authorized locker access granted by administrator' AS reason, " +
+                "  p.valid_from AS validFrom, " +
+                "  p.valid_until AS validUntil, " +
+                "  CASE " +
+                "    WHEN p.is_active = 1 " +
+                "      AND (p.valid_from IS NULL OR p.valid_from <= NOW() OR p.valid_from <= UTC_TIMESTAMP()) " +
+                "      AND (p.valid_until IS NULL OR p.valid_until >= NOW() OR p.valid_until >= UTC_TIMESTAMP()) " +
+                "    THEN 1 " +
+                "    ELSE 0 " +
+                "  END AS activeNow " +
+                "FROM asset_permissions p " +
+                "JOIN users u ON u.user_id = p.user_id " +
+                "JOIN secure_assets s ON s.asset_id = p.asset_id " +
+                "WHERE p.user_id = ? " +
+                "ORDER BY p.permission_id DESC",
+                userId
+            );
+        }
+
+        return events;
     }
 
     @GetMapping("/active-now")
@@ -208,8 +243,8 @@ public class AccessEventController {
             "WHERE p.user_id = ? " +
             "AND p.is_active = 1 " +
             "AND s.status = 'ACTIVE' " +
-            "AND (p.valid_from IS NULL OR p.valid_from <= NOW()) " +
-            "AND (p.valid_until IS NULL OR p.valid_until >= NOW()) " +
+            "AND (p.valid_from IS NULL OR p.valid_from <= NOW() OR p.valid_from <= UTC_TIMESTAMP()) " +
+            "AND (p.valid_until IS NULL OR p.valid_until >= NOW() OR p.valid_until >= UTC_TIMESTAMP()) " +
             "ORDER BY s.asset_name",
             userId
         );
