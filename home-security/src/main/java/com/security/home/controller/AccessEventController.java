@@ -109,11 +109,7 @@ public class AccessEventController {
             "ADMIN".equalsIgnoreCase(role)
             || PRIVILEGED_EMAILS.contains(email);
 
-        boolean isSecurity =
-            role.toUpperCase().contains("SECURITY")
-            || "mahesh0562@gmail.com".equalsIgnoreCase(email);
-
-        if (isAdmin || isSecurity) {
+        if (isAdmin) {
             return repository.findAllByOrderByEventTimeDesc();
         }
 

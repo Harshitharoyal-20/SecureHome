@@ -110,13 +110,21 @@ public class SecurityAlertController {
             "ADMIN".equalsIgnoreCase(role)
             || PRIVILEGED_EMAILS.contains(email);
 
-        if (!isAdmin) {
-            throw new ResponseStatusException(
-                HttpStatus.FORBIDDEN,
-                "You can't view this, only administrators can view."
-            );
+        boolean isSecurity =
+            role.toUpperCase().contains("SECURITY")
+            || "mahesh0562@gmail.com".equalsIgnoreCase(email);
+
+        if (isAdmin) {
+            return repository.findAllByOrderByCreatedAtDesc();
         }
 
-        return repository.findAllByOrderByCreatedAtDesc();
+        if (isSecurity) {
+            return repository.findHighRiskAlerts();
+        }
+
+        throw new ResponseStatusException(
+            HttpStatus.FORBIDDEN,
+            "You can't view this, only administrators can view."
+        );
     }
 }
