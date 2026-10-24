@@ -5,13 +5,17 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Timestamp;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
 @Service
 public class GuestPassService {
+
+    private static final DateTimeFormatter DB_DATETIME_FORMAT =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final JdbcTemplate jdbc;
 
@@ -21,7 +25,9 @@ public class GuestPassService {
 
     @Transactional
     public Map<String, Object> validateGuestPass(
-            Long guestPassId, Long guestUserId, Long assetId) {
+            Long guestPassId,
+            Long guestUserId,
+            Long assetId) {
 
         String decision = "DENIED";
         String reason;
@@ -64,15 +70,19 @@ public class GuestPassService {
         } else {
             Map<String, Object> pass = passes.get(0);
 
-            LocalDateTime start = ((Timestamp)
-                pass.get("valid_from")).toLocalDateTime();
+            LocalDateTime start = toUtcLocalDateTime(
+                pass.get("valid_from")
+            );
 
-            LocalDateTime end = ((Timestamp)
-                pass.get("valid_until")).toLocalDateTime();
+            LocalDateTime end = toUtcLocalDateTime(
+                pass.get("valid_until")
+            );
 
-            LocalDateTime now = LocalDateTime.now();
+            LocalDateTime nowUtc = LocalDateTime.now(Clock.systemUTC());
 
-            if (now.isBefore(start) || now.isAfter(end)) {
+            if (start == null || end == null) {
+                reason = "Guest pass has invalid validity dates";
+            } else if (nowUtc.isBefore(start) || nowUtc.isAfter(end)) {
                 reason = "Guest pass is outside its validity period";
             } else {
                 decision = "ALLOWED";
@@ -84,11 +94,16 @@ public class GuestPassService {
             "INSERT INTO access_events " +
             "(user_id, guest_pass_id, asset_id, decision, reason) " +
             "VALUES (?, ?, ?, ?, ?)",
-            guestUserId, guestPassId, assetId, decision, reason
+            guestUserId,
+            guestPassId,
+            assetId,
+            decision,
+            reason
         );
 
         eventId = jdbc.queryForObject(
-            "SELECT LAST_INSERT_ID()", Long.class
+            "SELECT LAST_INSERT_ID()",
+            Long.class
         );
 
         jdbc.update(
@@ -127,5 +142,34 @@ public class GuestPassService {
             "guestPassId", guestPassId,
             "assetId", assetId
         );
+    }
+
+    private LocalDateTime toUtcLocalDateTime(Object value) {
+        if (value == null) {
+            return null;
+        }
+
+        if (value instanceof java.sql.Timestamp timestamp) {
+            return timestamp.toLocalDateTime();
+        }
+
+        if (value instanceof LocalDateTime dateTime) {
+            return dateTime;
+        }
+
+        String text = String.valueOf(value).trim().replace('T', ' ');
+
+        try {
+            return LocalDateTime.parse(text, DB_DATETIME_FORMAT);
+        } catch (Exception ignored) {
+            try {
+                return LocalDateTime.parse(
+                    text,
+                    DateTimeFormatter.ISO_LOCAL_DATE_TIME
+                );
+            } catch (Exception ex) {
+                return null;
+            }
+        }
     }
 }

@@ -8,9 +8,11 @@ import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
-import java.sql.Timestamp;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -27,6 +29,9 @@ public class AdminPermissionController {
         "pranawii0713@gmail.com",
         "harshitha0064@gmail.com"
     );
+
+    private static final DateTimeFormatter UTC_FORMAT =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final JdbcTemplate jdbc;
 
@@ -94,9 +99,7 @@ public class AdminPermissionController {
         }
 
         boolean hasAdminRole = auth.getAuthorities().stream()
-            .anyMatch(a ->
-                "ROLE_ADMIN".equals(a.getAuthority())
-            );
+            .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
 
         if (hasAdminRole) {
             return true;
@@ -106,7 +109,7 @@ public class AdminPermissionController {
 
         return email != null &&
             PRIVILEGED_EMAILS.contains(
-                email.trim().toLowerCase()
+                email.trim().toLowerCase(Locale.ROOT)
             );
     }
 
@@ -127,9 +130,7 @@ public class AdminPermissionController {
     }
 
     @GetMapping("/users")
-    public List<Map<String, Object>> users(
-            Authentication auth) {
-
+    public List<Map<String, Object>> users(Authentication auth) {
         requireAdmin(auth);
 
         return jdbc.queryForList(
@@ -142,9 +143,7 @@ public class AdminPermissionController {
     }
 
     @GetMapping("/assets")
-    public List<Map<String, Object>> assets(
-            Authentication auth) {
-
+    public List<Map<String, Object>> assets(Authentication auth) {
         requireAdmin(auth);
 
         return jdbc.queryForList(
@@ -160,9 +159,7 @@ public class AdminPermissionController {
     }
 
     @GetMapping
-    public List<Map<String, Object>> permissions(
-            Authentication auth) {
-
+    public List<Map<String, Object>> permissions(Authentication auth) {
         requireAdmin(auth);
 
         return jdbc.queryForList(
@@ -195,11 +192,19 @@ public class AdminPermissionController {
 
         LocalDateTime start = dateTime(body, "validFrom");
         LocalDateTime end = dateTime(body, "validUntil");
+        LocalDateTime nowUtc = LocalDateTime.now(Clock.systemUTC());
 
         if (!start.isBefore(end)) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
                 "Expiry must be later than the start time"
+            );
+        }
+
+        if (!end.isAfter(nowUtc)) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Expiry must be in the future"
             );
         }
 
@@ -231,14 +236,16 @@ public class AdminPermissionController {
             );
         }
 
-        List<Map<String, Object>> existing =
-            jdbc.queryForList(
-                "SELECT permission_id FROM asset_permissions " +
-                "WHERE user_id = ? AND asset_id = ? " +
-                "ORDER BY permission_id DESC LIMIT 1",
-                userId,
-                assetId
-            );
+        String startUtc = start.format(UTC_FORMAT);
+        String endUtc = end.format(UTC_FORMAT);
+
+        List<Map<String, Object>> existing = jdbc.queryForList(
+            "SELECT permission_id FROM asset_permissions " +
+            "WHERE user_id = ? AND asset_id = ? " +
+            "ORDER BY permission_id DESC LIMIT 1",
+            userId,
+            assetId
+        );
 
         if (existing.isEmpty()) {
             jdbc.update(
@@ -248,8 +255,8 @@ public class AdminPermissionController {
                 "VALUES (?, ?, 1, '00:00:00', '23:59:59', ?, ?)",
                 userId,
                 assetId,
-                Timestamp.valueOf(start),
-                Timestamp.valueOf(end)
+                startUtc,
+                endUtc
             );
         } else {
             int permissionId = ((Number)
@@ -262,8 +269,8 @@ public class AdminPermissionController {
                 "allowed_end = '23:59:59', " +
                 "valid_from = ?, valid_until = ? " +
                 "WHERE permission_id = ?",
-                Timestamp.valueOf(start),
-                Timestamp.valueOf(end),
+                startUtc,
+                endUtc,
                 permissionId
             );
         }
@@ -299,16 +306,10 @@ public class AdminPermissionController {
             );
         }
 
-        return Map.of(
-            "message",
-            "Permission revoked"
-        );
+        return Map.of("message", "Permission revoked");
     }
 
-    private int number(
-            Map<String, Object> body,
-            String key) {
-
+    private int number(Map<String, Object> body, String key) {
         try {
             Object value = body.get(key);
 
@@ -316,9 +317,7 @@ public class AdminPermissionController {
                 throw new NumberFormatException();
             }
 
-            return Integer.parseInt(
-                String.valueOf(value)
-            );
+            return Integer.parseInt(String.valueOf(value));
         } catch (Exception ex) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
@@ -340,19 +339,14 @@ public class AdminPermissionController {
 
             String input = String.valueOf(value);
 
-            try {
-                return LocalDateTime.parse(input);
-            } catch (Exception ignored) {
-                return java.time.LocalDateTime.parse(
-                    input,
-                    java.time.format.DateTimeFormatter
-                        .ofPattern("yyyy-MM-dd'T'HH:mm")
-                );
-            }
+            return LocalDateTime.parse(
+                input,
+                DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+            );
         } catch (Exception ex) {
             throw new ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                key + " must use YYYY-MM-DDTHH:mm format"
+                key + " must use yyyy-MM-dd'T'HH:mm:ss format (UTC)"
             );
         }
     }

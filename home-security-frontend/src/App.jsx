@@ -1,4 +1,3 @@
-
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 import AdminAccessPanel from './AdminAccessPanel';
@@ -130,24 +129,30 @@ function App() {
     const body = await readResponse(response);
 
     if (response.status === 401) {
-      throw new Error(
+      const err = new Error(
         'Your session has expired. Please sign in again.'
       );
+      err.status = 401;
+      throw err;
     }
 
     if (response.status === 403) {
-      throw new Error(
+      const err = new Error(
         responseMessage(
           body,
           "You can't access this resource with this account."
         )
       );
+      err.status = 403;
+      throw err;
     }
 
     if (!response.ok) {
-      throw new Error(
+      const err = new Error(
         responseMessage(body, `Request failed (${response.status}).`)
       );
+      err.status = response.status;
+      throw err;
     }
 
     return body;
@@ -234,12 +239,13 @@ function App() {
       } else {
         setSecurityAlerts([]);
 
-        const status = results[2].reason?.status;
+        const alertRequestError = results[2].reason;
+        const status = alertRequestError?.status;
 
         setAlertError(
           status === 403
             ? ALERTS_DENIED_MESSAGE
-            : results[2].reason?.message ||
+            : alertRequestError?.message ||
               'Unable to load security alerts.'
         );
       }

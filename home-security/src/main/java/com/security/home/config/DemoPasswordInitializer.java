@@ -3,11 +3,13 @@ package com.security.home.config;
 
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 @Component
+@Profile("demo-passwords")
 public class DemoPasswordInitializer implements ApplicationRunner {
 
     private final JdbcTemplate jdbc;

@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 const BASE = '/api/admin/permissions';
+const TIME_ZONE = 'Asia/Kolkata';
 
 function getUserId(user) {
   return user.userId ?? user.user_id;
@@ -58,33 +59,64 @@ function isPermissionActive(permission) {
   return value === true || value === 1 || value === '1';
 }
 
-function formatDate(value) {
-  if (!value) return 'Not set';
+function parseUtcDate(value) {
+  if (!value) return null;
 
-  return String(value).replace('T', ' ').slice(0, 19);
+  const text = String(value).trim();
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(normalized);
+
+  return new Date(hasTimezone ? normalized : `${normalized}Z`);
+}
+
+function localDateTimeToUtc(value) {
+  if (!value) return '';
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Please enter a valid start and end time.');
+  }
+
+  return date.toISOString().slice(0, 19);
+}
+
+function formatDate(value) {
+  const date = parseUtcDate(value);
+
+  if (!date || Number.isNaN(date.getTime())) return 'Not set';
+
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  }).format(date);
 }
 
 function getCurrentStatus(permission) {
   if (!isPermissionActive(permission)) return 'Revoked';
 
-  const fromValue = getValidFrom(permission);
-  const untilValue = getValidUntil(permission);
-  const now = new Date();
-
-  if (!fromValue || !untilValue) return 'Invalid dates';
-
-  const start = new Date(fromValue);
-  const end = new Date(untilValue);
+  const start = parseUtcDate(getValidFrom(permission));
+  const end = parseUtcDate(getValidUntil(permission));
 
   if (
+    !start ||
+    !end ||
     Number.isNaN(start.getTime()) ||
     Number.isNaN(end.getTime())
   ) {
     return 'Invalid dates';
   }
 
-  if (now < start) return 'Scheduled';
-  if (now > end) return 'Expired';
+  const now = Date.now();
+
+  if (now < start.getTime()) return 'Scheduled';
+  if (now > end.getTime()) return 'Expired';
 
   return 'Active';
 }
@@ -93,12 +125,10 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
   const [users, setUsers] = useState([]);
   const [lockers, setLockers] = useState([]);
   const [permissions, setPermissions] = useState([]);
-
   const [userId, setUserId] = useState('');
   const [assetId, setAssetId] = useState('');
   const [validFrom, setValidFrom] = useState('');
   const [validUntil, setValidUntil] = useState('');
-
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -117,9 +147,7 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
 
       setUsers(Array.isArray(userData) ? userData : []);
       setLockers(Array.isArray(assetData) ? assetData : []);
-      setPermissions(
-        Array.isArray(permissionData) ? permissionData : []
-      );
+      setPermissions(Array.isArray(permissionData) ? permissionData : []);
     } catch (err) {
       setError(err.message || 'Could not load permission data.');
     } finally {
@@ -137,7 +165,7 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
     setMessage('');
 
     if (!userId || !assetId || !validFrom || !validUntil) {
-      setError('Select a user, locker, start date, and expiry date.');
+      setError('Select a user, locker, start time, and expiry time.');
       return;
     }
 
@@ -161,15 +189,14 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
         body: JSON.stringify({
           userId: Number(userId),
           assetId: Number(assetId),
-          validFrom,
-          validUntil
+          validFrom: localDateTimeToUtc(validFrom),
+          validUntil: localDateTimeToUtc(validUntil)
         })
       });
 
       setMessage('View-only permission saved successfully.');
       setValidFrom('');
       setValidUntil('');
-
       await load();
     } catch (err) {
       setError(err.message || 'Could not grant permission.');
@@ -186,14 +213,9 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       return;
     }
 
-    const lockerName = getPermissionAssetName(permission);
-    const userEmail = getPermissionEmail(permission);
-
-    if (
-      !window.confirm(
-        `Revoke access to ${lockerName} for ${userEmail}?`
-      )
-    ) {
+    if (!window.confirm(
+      `Revoke access to ${getPermissionAssetName(permission)} for ${getPermissionEmail(permission)}?`
+    )) {
       return;
     }
 
@@ -221,30 +243,19 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
         <div>
           <h2>Manage Access</h2>
           <p className="muted">
-            Grant, view, or revoke time-limited access to a locker or safe.
+            Grant, view, or revoke time-limited access.
+          </p>
+          <p className="muted">
+            Times are displayed in India Standard Time (IST).
           </p>
         </div>
-
-        <button
-          type="button"
-          onClick={load}
-          disabled={busy || loading}
-        >
+        <button type="button" onClick={load} disabled={busy || loading}>
           {loading ? 'Refreshing...' : 'Refresh'}
         </button>
       </div>
 
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-
-      {message && (
-        <p className="success" role="status">
-          {message}
-        </p>
-      )}
+      {error && <p className="error" role="alert">{error}</p>}
+      {message && <p className="success" role="status">{message}</p>}
 
       <form className="locker-form" onSubmit={grant}>
         <h3>Grant Locker Permission</h3>
@@ -253,19 +264,14 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
         <select
           id="permission-user"
           value={userId}
-          onChange={(event) => setUserId(event.target.value)}
+          onChange={event => setUserId(event.target.value)}
           required
           disabled={busy || loading}
         >
           <option value="">Select a user</option>
-          {users.map((user) => {
+          {users.map(user => {
             const id = getUserId(user);
-
-            return (
-              <option key={id} value={id}>
-                {getUserLabel(user)}
-              </option>
-            );
+            return <option key={id} value={id}>{getUserLabel(user)}</option>;
           })}
         </select>
 
@@ -273,14 +279,13 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
         <select
           id="permission-locker"
           value={assetId}
-          onChange={(event) => setAssetId(event.target.value)}
+          onChange={event => setAssetId(event.target.value)}
           required
           disabled={busy || loading}
         >
           <option value="">Select a locker</option>
-          {lockers.map((locker) => {
+          {lockers.map(locker => {
             const id = getAssetId(locker);
-
             return (
               <option key={id} value={id}>
                 {getAssetName(locker)} (ID {id})
@@ -289,22 +294,22 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
           })}
         </select>
 
-        <label htmlFor="permission-start">Access starts</label>
+        <label htmlFor="permission-start">Access starts (IST)</label>
         <input
           id="permission-start"
           type="datetime-local"
           value={validFrom}
-          onChange={(event) => setValidFrom(event.target.value)}
+          onChange={event => setValidFrom(event.target.value)}
           required
           disabled={busy}
         />
 
-        <label htmlFor="permission-expiry">Access expires</label>
+        <label htmlFor="permission-expiry">Access expires (IST)</label>
         <input
           id="permission-expiry"
           type="datetime-local"
           value={validUntil}
-          onChange={(event) => setValidUntil(event.target.value)}
+          onChange={event => setValidUntil(event.target.value)}
           required
           disabled={busy}
         />
@@ -321,7 +326,6 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       </form>
 
       <h3>Permission Records</h3>
-
       {loading && <p>Loading permission records...</p>}
 
       <div className="permission-table-wrap">
@@ -330,37 +334,28 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
             <tr>
               <th>User</th>
               <th>Locker</th>
-              <th>Starts</th>
-              <th>Expires</th>
+              <th>Starts (IST)</th>
+              <th>Expires (IST)</th>
               <th>Status</th>
               <th>Action</th>
             </tr>
           </thead>
-
           <tbody>
             {permissions.map((permission, index) => {
               const id = getPermissionId(permission);
-              const status = getCurrentStatus(permission);
               const fullName = getPermissionName(permission);
               const email = getPermissionEmail(permission);
 
               return (
                 <tr key={id ?? index}>
                   <td>
-                    {fullName && (
-                      <>
-                        {fullName}
-                        <br />
-                      </>
-                    )}
+                    {fullName && <>{fullName}<br /></>}
                     {email}
                   </td>
-
                   <td>{getPermissionAssetName(permission)}</td>
                   <td>{formatDate(getValidFrom(permission))}</td>
                   <td>{formatDate(getValidUntil(permission))}</td>
-                  <td>{status}</td>
-
+                  <td>{getCurrentStatus(permission)}</td>
                   <td>
                     {isPermissionActive(permission) && (
                       <button
@@ -382,17 +377,11 @@ export default function AdminAccessPanel({ apiFetch, credentials }) {
       {!loading && permissions.length === 0 && (
         <p>No permission records found.</p>
       )}
-
       {users.length === 0 && !loading && (
-        <p className="muted">
-          No registered users were returned by the server.
-        </p>
+        <p className="muted">No registered users were returned by the server.</p>
       )}
-
       {lockers.length === 0 && !loading && (
-        <p className="muted">
-          No lockers were returned by the server.
-        </p>
+        <p className="muted">No lockers were returned by the server.</p>
       )}
     </section>
   );

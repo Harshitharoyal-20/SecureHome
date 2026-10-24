@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 @RestController
@@ -41,7 +42,8 @@ public class SecureAssetController {
 
     private int getUserId(Authentication auth) {
         if (auth == null || !auth.isAuthenticated()
-                || "anonymousUser".equals(String.valueOf(auth.getPrincipal()))) {
+                || "anonymousUser".equals(
+                    String.valueOf(auth.getPrincipal()))) {
             throw new ResponseStatusException(
                 HttpStatus.UNAUTHORIZED,
                 "Please log in first."
@@ -119,10 +121,19 @@ public class SecureAssetController {
         String email = findUserEmail(auth);
 
         return email != null
-            && PRIVILEGED_EMAILS.contains(email.trim().toLowerCase());
+            && PRIVILEGED_EMAILS.contains(
+                email.trim().toLowerCase(Locale.ROOT)
+            );
     }
 
     private void requireAdmin(Authentication auth) {
+        if (auth == null || !auth.isAuthenticated()) {
+            throw new ResponseStatusException(
+                HttpStatus.UNAUTHORIZED,
+                "Please sign in first."
+            );
+        }
+
         if (!isAdmin(auth)) {
             throw new ResponseStatusException(
                 HttpStatus.FORBIDDEN,
@@ -146,8 +157,9 @@ public class SecureAssetController {
             "AND p.is_active = 1 " +
             "AND p.valid_from IS NOT NULL " +
             "AND p.valid_until IS NOT NULL " +
-            "AND NOW() BETWEEN p.valid_from AND p.valid_until " +
-            "AND CURRENT_TIME BETWEEN p.allowed_start AND p.allowed_end" +
+            "AND UTC_TIMESTAMP() BETWEEN p.valid_from AND p.valid_until " +
+            "AND CONVERT_TZ(UTC_TIMESTAMP(), '+00:00', '+05:30') " +
+            "BETWEEN p.allowed_start AND p.allowed_end" +
             "))",
             Integer.class,
             assetId,
@@ -209,7 +221,7 @@ public class SecureAssetController {
             if (!hasAccess(id, userId)) {
                 throw new ResponseStatusException(
                     HttpStatus.FORBIDDEN,
-                    "You can't access this locker with this account."
+                    "You can't view this locker because you don't have permission."
                 );
             }
         }
@@ -226,11 +238,11 @@ public class SecureAssetController {
         requireAdmin(auth);
 
         asset.setAssetName(asset.getAssetName().trim());
-        asset.setAssetType(asset.getAssetType().trim().toUpperCase());
+        asset.setAssetType(asset.getAssetType().trim().toUpperCase(Locale.ROOT));
         asset.setLocationDescription(
             asset.getLocationDescription().trim()
         );
-        asset.setStatus(asset.getStatus().trim().toUpperCase());
+        asset.setStatus(asset.getStatus().trim().toUpperCase(Locale.ROOT));
 
         if (asset.getOwnerUserId() == null) {
             throw new ResponseStatusException(
@@ -271,11 +283,15 @@ public class SecureAssetController {
             ));
 
         existing.setAssetName(input.getAssetName().trim());
-        existing.setAssetType(input.getAssetType().trim().toUpperCase());
+        existing.setAssetType(
+            input.getAssetType().trim().toUpperCase(Locale.ROOT)
+        );
         existing.setLocationDescription(
             input.getLocationDescription().trim()
         );
-        existing.setStatus(input.getStatus().trim().toUpperCase());
+        existing.setStatus(
+            input.getStatus().trim().toUpperCase(Locale.ROOT)
+        );
 
         if (input.getOwnerUserId() != null) {
             Integer count = jdbc.queryForObject(
