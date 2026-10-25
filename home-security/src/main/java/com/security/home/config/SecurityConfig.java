@@ -120,8 +120,9 @@ public class SecurityConfig {
                     PasswordVerificationFilter.OAUTH_AUTHENTICATED_ATTRIBUTE,
                     true);
 
-            session.removeAttribute(
-                    PasswordVerificationFilter.VERIFIED_ATTRIBUTE);
+            session.setAttribute(
+                    PasswordVerificationFilter.VERIFIED_ATTRIBUTE,
+                    true);
 
             SecurityContext context =
                     SecurityContextHolder.createEmptyContext();
@@ -132,8 +133,16 @@ public class SecurityConfig {
             securityContextRepository.saveContext(
                     context, request, response);
 
-            response.sendRedirect(
-                    "https://secure-home-kappa.vercel.app/?oauth=success");
+            String referer = request.getHeader("Referer");
+            String host = request.getHeader("Host");
+            String redirectUrl = "https://secure-home-kappa.vercel.app/?oauth=success";
+
+            if ((referer != null && (referer.contains("localhost") || referer.contains("127.0.0.1")))
+                    || (host != null && (host.contains("localhost") || host.contains("127.0.0.1")))) {
+                redirectUrl = "http://localhost:5173/?oauth=success";
+            }
+
+            response.sendRedirect(redirectUrl);
         };
     }
 
@@ -240,6 +249,20 @@ public class SecurityConfig {
                 .userInfoEndpoint(userInfo ->
                         userInfo.userService(customOAuth2UserService))
                 .successHandler(oauthSuccessHandler)
+                .failureHandler((request, response, exception) -> {
+                    String referer = request.getHeader("Referer");
+                    String host = request.getHeader("Host");
+                    String errorMsg = exception.getMessage() != null ? exception.getMessage() : "OAuth authentication failed";
+                    String encodedError = java.net.URLEncoder.encode(errorMsg, java.nio.charset.StandardCharsets.UTF_8);
+
+                    String redirectUrl = "https://secure-home-kappa.vercel.app/?oauth=error&error=" + encodedError;
+                    if ((referer != null && (referer.contains("localhost") || referer.contains("127.0.0.1")))
+                            || (host != null && (host.contains("localhost") || host.contains("127.0.0.1")))) {
+                        redirectUrl = "http://localhost:5173/?oauth=error&error=" + encodedError;
+                    }
+
+                    response.sendRedirect(redirectUrl);
+                })
             );
 
         return http.build();

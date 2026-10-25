@@ -46,10 +46,15 @@ public class PasswordVerificationFilter extends OncePerRequestFilter {
 
         HttpSession session = request.getSession(false);
 
-        boolean oauthAuthenticated = session != null
+        org.springframework.security.core.Authentication auth =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        boolean isOAuthToken = auth != null && auth.isAuthenticated()
+                && (auth instanceof org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken);
+
+        boolean oauthAuthenticated = isOAuthToken || (session != null
                 && Boolean.TRUE.equals(
                         session.getAttribute(
-                                OAUTH_AUTHENTICATED_ATTRIBUTE));
+                                OAUTH_AUTHENTICATED_ATTRIBUTE)));
 
         boolean passwordVerified = session != null
                 && Boolean.TRUE.equals(

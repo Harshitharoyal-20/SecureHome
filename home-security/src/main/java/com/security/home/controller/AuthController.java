@@ -166,7 +166,7 @@ public class AuthController {
         result.put("isAdmin", isAdmin);
         result.put("isSecurity", isSecurity);
         result.put("authorities", authorities);
-        result.put("passwordVerified", passwordVerified);
+        result.put("passwordVerified", passwordVerified || oauthAuthenticated);
         result.put("oauthAuthenticated", oauthAuthenticated);
 
         return ResponseEntity.ok(result);

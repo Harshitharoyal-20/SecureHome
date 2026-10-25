@@ -66,7 +66,7 @@ public class CustomOAuth2UserService
         String providerUserId = githubId.toString();
 
         List<Map<String, Object>> links = jdbcTemplate.queryForList(
-                "SELECT u.user_id, u.status, r.role_name " +
+                "SELECT u.user_id, u.status, u.email, r.role_name " +
                 "FROM oauth_account_links l " +
                 "JOIN users u ON u.user_id = l.user_id " +
                 "JOIN roles r ON r.role_id = u.role_id " +
@@ -75,6 +75,7 @@ public class CustomOAuth2UserService
         );
 
         String roleName;
+        String email = "";
 
         if (!links.isEmpty()) {
             Map<String, Object> linkedUser = links.get(0);
@@ -86,87 +87,100 @@ public class CustomOAuth2UserService
             }
 
             roleName = String.valueOf(linkedUser.get("role_name"));
-
-        } else {
-            String email = getVerifiedEmail(request);
-
-            if (email == null || email.isBlank()) {
-                throw oauthError("invalid_user_info",
-                        "No verified GitHub email was found. " +
-                        "Verify an email in GitHub and try again.");
+            Object existingEmail = linkedUser.get("email");
+            if (existingEmail != null) {
+                email = existingEmail.toString();
             }
 
+        } else {
+            email = resolveUserEmail(request, githubUser);
+
             Integer existingUser = jdbcTemplate.query(
-                    "SELECT user_id FROM users WHERE email = ?",
+                    "SELECT user_id FROM users WHERE LOWER(email) = LOWER(?)",
                     rs -> rs.next() ? rs.getInt("user_id") : null,
                     email
             );
 
             if (existingUser != null) {
-                throw oauthError("access_denied",
-                        "An account already uses this email. " +
-                        "Sign in using that account or contact the administrator.");
-            }
-
-            Integer familyRoleId = jdbcTemplate.query(
-                    "SELECT role_id FROM roles WHERE role_name = ?",
-                    rs -> rs.next() ? rs.getInt("role_id") : null,
-                    "FAMILY_MEMBER"
-            );
-
-            if (familyRoleId == null) {
-                throw oauthError("server_error",
-                        "FAMILY_MEMBER role is missing from the database");
-            }
-
-            String name = githubUser.getAttribute("name");
-            String login = githubUser.getAttribute("login");
-
-            if (name == null || name.isBlank()) {
-                name = login;
-            }
-
-            if (name == null || name.isBlank()) {
-                name = "GitHub User";
-            }
-
-            String unusablePasswordHash =
-                    passwordEncoder.encode(UUID.randomUUID().toString());
-
-            KeyHolder keyHolder = new GeneratedKeyHolder();
-            String finalName = name;
-
-            int inserted = jdbcTemplate.update(connection -> {
-                PreparedStatement ps = connection.prepareStatement(
-                        "INSERT INTO users " +
-                        "(full_name, email, password_hash, role_id, status) " +
-                        "VALUES (?, ?, ?, ?, 'ACTIVE')",
-                        Statement.RETURN_GENERATED_KEYS
+                // Seamlessly link this GitHub account to the existing user
+                jdbcTemplate.update(
+                        "INSERT INTO oauth_account_links (provider, provider_user_id, user_id) " +
+                        "VALUES (?, ?, ?) " +
+                        "ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)",
+                        "github", providerUserId, existingUser
                 );
-                ps.setString(1, finalName);
-                ps.setString(2, email);
-                ps.setString(3, unusablePasswordHash);
-                ps.setInt(4, familyRoleId);
-                return ps;
-            }, keyHolder);
 
-            Number generatedId = keyHolder.getKey();
+                String existingRole = jdbcTemplate.query(
+                        "SELECT r.role_name FROM users u JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ?",
+                        rs -> rs.next() ? rs.getString("role_name") : null,
+                        existingUser
+                );
+                roleName = (existingRole != null && !existingRole.isBlank()) ? existingRole : "FAMILY_MEMBER";
+            } else {
+                Integer familyRoleId = jdbcTemplate.query(
+                        "SELECT role_id FROM roles WHERE role_name = ?",
+                        rs -> rs.next() ? rs.getInt("role_id") : null,
+                        "FAMILY_MEMBER"
+                );
 
-            if (inserted != 1 || generatedId == null) {
-                throw oauthError("server_error",
-                        "Could not create your SecureHome account");
+                if (familyRoleId == null) {
+                    familyRoleId = jdbcTemplate.query(
+                            "SELECT role_id FROM roles ORDER BY role_id ASC LIMIT 1",
+                            rs -> rs.next() ? rs.getInt("role_id") : 2
+                    );
+                }
+
+                String name = githubUser.getAttribute("name");
+                String login = githubUser.getAttribute("login");
+
+                if (name == null || name.isBlank()) {
+                    name = login;
+                }
+
+                if (name == null || name.isBlank()) {
+                    name = "GitHub User";
+                }
+
+                String unusablePasswordHash =
+                        passwordEncoder.encode(UUID.randomUUID().toString());
+
+                KeyHolder keyHolder = new GeneratedKeyHolder();
+                String finalName = name;
+                String finalEmail = email;
+                int finalRoleId = familyRoleId != null ? familyRoleId : 2;
+
+                int inserted = jdbcTemplate.update(connection -> {
+                    PreparedStatement ps = connection.prepareStatement(
+                            "INSERT INTO users " +
+                            "(full_name, email, password_hash, role_id, status) " +
+                            "VALUES (?, ?, ?, ?, 'ACTIVE')",
+                            Statement.RETURN_GENERATED_KEYS
+                    );
+                    ps.setString(1, finalName);
+                    ps.setString(2, finalEmail);
+                    ps.setString(3, unusablePasswordHash);
+                    ps.setInt(4, finalRoleId);
+                    return ps;
+                }, keyHolder);
+
+                Number generatedId = keyHolder.getKey();
+
+                if (inserted != 1 || generatedId == null) {
+                    throw oauthError("server_error",
+                            "Could not create your SecureHome account");
+                }
+
+                int userId = generatedId.intValue();
+
+                jdbcTemplate.update(
+                        "INSERT INTO oauth_account_links " +
+                        "(provider, provider_user_id, user_id) " +
+                        "VALUES (?, ?, ?)",
+                        "github", providerUserId, userId
+                );
+
+                roleName = "FAMILY_MEMBER";
             }
-
-            int userId = generatedId.intValue();
-
-            jdbcTemplate.update(
-                    "INSERT INTO oauth_account_links " +
-                    "(provider, provider_user_id, user_id) " +
-                    "VALUES (?, ?, ?)",
-                    "github", providerUserId, userId
-            );
-
-            roleName = "FAMILY_MEMBER";
         }
 
         Set<GrantedAuthority> authorities = new LinkedHashSet<>(
@@ -184,7 +198,7 @@ public class CustomOAuth2UserService
                     : githubLogin;
             String userEmail = githubUser.getAttribute("email") != null
                     ? String.valueOf(githubUser.getAttribute("email"))
-                    : "";
+                    : (email != null ? email : "");
             githubNotificationService.recordAccess(githubLogin, githubName, userEmail);
         } catch (Exception ignored) {
         }
@@ -196,44 +210,84 @@ public class CustomOAuth2UserService
         );
     }
 
-    private String getVerifiedEmail(OAuth2UserRequest request) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setBearerAuth(
-                request.getAccessToken().getTokenValue());
-        headers.set("Accept", "application/vnd.github+json");
+    private String resolveUserEmail(OAuth2UserRequest request, OAuth2User githubUser) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(
+                    request.getAccessToken().getTokenValue());
+            headers.set("Accept", "application/vnd.github+json");
 
-        HttpEntity<Void> entity = new HttpEntity<>(headers);
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-        List<Map<String, Object>> emails = restTemplate.exchange(
-                "https://api.github.com/user/emails",
-                HttpMethod.GET,
-                entity,
-                new ParameterizedTypeReference<
-                        List<Map<String, Object>>>() {}
-        ).getBody();
+            List<Map<String, Object>> emails = restTemplate.exchange(
+                    "https://api.github.com/user/emails",
+                    HttpMethod.GET,
+                    entity,
+                    new ParameterizedTypeReference<
+                            List<Map<String, Object>>>() {}
+            ).getBody();
 
-        if (emails == null) {
-            return null;
-        }
+            if (emails != null && !emails.isEmpty()) {
+                // Priority 1: Primary and verified
+                for (Map<String, Object> item : emails) {
+                    if (Boolean.TRUE.equals(item.get("primary"))
+                            && Boolean.TRUE.equals(item.get("verified"))) {
+                        Object email = item.get("email");
+                        if (email != null && !email.toString().isBlank()) {
+                            return email.toString().trim();
+                        }
+                    }
+                }
 
-        for (Map<String, Object> item : emails) {
-            if (Boolean.TRUE.equals(item.get("primary"))
-                    && Boolean.TRUE.equals(item.get("verified"))) {
-                Object email = item.get("email");
-                return email == null ? null : email.toString();
-            }
-        }
+                // Priority 2: Any verified email
+                for (Map<String, Object> item : emails) {
+                    if (Boolean.TRUE.equals(item.get("verified"))) {
+                        Object email = item.get("email");
+                        if (email != null && !email.toString().isBlank()) {
+                            return email.toString().trim();
+                        }
+                    }
+                }
 
-        for (Map<String, Object> item : emails) {
-            if (Boolean.TRUE.equals(item.get("verified"))) {
-                Object email = item.get("email");
-                if (email != null) {
-                    return email.toString();
+                // Priority 3: Primary email (even if freshly created / unverified)
+                for (Map<String, Object> item : emails) {
+                    if (Boolean.TRUE.equals(item.get("primary"))) {
+                        Object email = item.get("email");
+                        if (email != null && !email.toString().isBlank()) {
+                            return email.toString().trim();
+                        }
+                    }
+                }
+
+                // Priority 4: Any listed email
+                for (Map<String, Object> item : emails) {
+                    Object email = item.get("email");
+                    if (email != null && !email.toString().isBlank()) {
+                        return email.toString().trim();
+                    }
                 }
             }
+        } catch (Exception ignored) {
+            // Continue to attribute fallbacks if GitHub /user/emails API request fails
         }
 
-        return null;
+        // Priority 5: Profile attribute email
+        Object attrEmail = githubUser.getAttribute("email");
+        if (attrEmail != null && !attrEmail.toString().isBlank()) {
+            return attrEmail.toString().trim();
+        }
+
+        // Priority 6: Official GitHub noreply email address
+        Object login = githubUser.getAttribute("login");
+        Object id = githubUser.getAttribute("id");
+        if (login != null && !login.toString().isBlank()) {
+            return login.toString().trim().toLowerCase() + "@users.noreply.github.com";
+        }
+        if (id != null) {
+            return "user" + id + "@users.noreply.github.com";
+        }
+
+        return "github_" + UUID.randomUUID().toString().substring(0, 8) + "@securehome.local";
     }
 
     private OAuth2AuthenticationException oauthError(

@@ -423,6 +423,12 @@ function App() {
     let active = true;
 
     async function restoreSession() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('oauth') === 'error') {
+        const errorMsg = params.get('error') || 'GitHub sign-in could not be completed.';
+        setLoginError(errorMsg);
+      }
+
       const user = await checkSession();
 
       if (!active) return;
