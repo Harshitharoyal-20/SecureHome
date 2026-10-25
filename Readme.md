@@ -35,6 +35,8 @@ The application uses a React frontend, a Spring Boot backend, and a MySQL databa
 | Build tool | Maven |
 | CI/CD Pipelines | GitHub Actions, GitLab CI/CD |
 | Containerization | Docker (Multi-stage build) |
+| Monitoring & Metrics | Prometheus, Grafana, Spring Boot Actuator, Micrometer |
+| Custom Domain & DDNS | DuckDNS, NGINX Reverse Proxy, Cloudflare |
 | Version control | Git and GitHub |
 | Frontend deployment | Vercel |
 | Backend deployment | Render |
@@ -296,7 +298,106 @@ To enable automated production deployments, configure the following secrets/vari
 
 ---
 
-## 7. Repository Structure
+---
+
+## 7. Application Monitoring & Observability (Prometheus & Grafana)
+
+SecureHome incorporates an enterprise-grade monitoring and observability stack combining **Spring Boot Actuator**, **Micrometer**, **Prometheus**, and **Grafana** to provide real-time visibility into application performance, JVM health, HTTP request throughput, and database connection pooling.
+
+```mermaid
+flowchart LR
+    subgraph App["SecureHome Backend (Port 8080)"]
+        Actuator["Spring Boot Actuator"]
+        Micro["Micrometer Prometheus Registry"]
+        Actuator --> Micro
+        Micro --> Endpoint["/actuator/prometheus"]
+    end
+
+    subgraph Monitoring["Observability Stack"]
+        Prom["Prometheus (Port 9090)"]
+        Graf["Grafana (Port 3000)"]
+        Prom -- "Scrapes metrics (15s)" --> Endpoint
+        Graf -- "Queries time-series" --> Prom
+    end
+
+    subgraph Dashboards["Grafana Live Dashboard"]
+        D1["JVM Heap & CPU"]
+        D2["HTTP Request Throughput"]
+        D3["MySQL HikariCP Pool"]
+        D4["Active Threads & GC"]
+        Graf --> D1
+        Graf --> D2
+        Graf --> D3
+        Graf --> D4
+    end
+```
+
+### Metrics Exposed by the Application:
+- **JVM Health:** Heap/Non-heap memory allocation (`jvm_memory_used_bytes`, `jvm_memory_max_bytes`), Garbage Collection pauses, and thread states (`jvm_threads_live_threads`).
+- **CPU & System:** JVM process CPU usage (`process_cpu_usage`), system-wide CPU load (`system_cpu_usage`), and uptime (`process_uptime_seconds`).
+- **HTTP Server Metrics:** Throughput, request rates, status codes (2xx, 4xx, 5xx), and p95 latency broken down by URI endpoints (`http_server_requests_seconds_count`, `http_server_requests_seconds_max`).
+- **MySQL Database Pool:** HikariCP connection pool health (`hikaricp_connections_active`, `hikaricp_connections_idle`, `hikaricp_connections_pending`).
+
+### Running the Monitoring Stack Locally:
+
+The entire monitoring environment is containerized with auto-provisioned Prometheus datasources and dashboards:
+
+```bash
+cd monitoring
+docker compose up -d
+```
+
+Access the monitoring interfaces:
+* **Grafana Dashboard:** http://localhost:3000 (Default login: `admin` / `admin`)
+  - Auto-loads the **SecureHome – Application & System Monitoring** dashboard.
+* **Prometheus Targets & Query UI:** http://localhost:9090
+
+---
+
+## 8. Custom Domain & Dynamic DNS (DuckDNS & NGINX)
+
+To provide stable domain resolution and secure HTTPS access across cloud, VPS, or homelab deployments, SecureHome supports **DuckDNS** (free Dynamic DNS), custom domain mappings, and **NGINX Reverse Proxy** with SSL/TLS termination.
+
+```mermaid
+flowchart TD
+    User["User / Client Request"] --> Domain["securehome.duckdns.org (or custom domain)"]
+    Domain --> Proxy["NGINX Reverse Proxy (Port 80 / 443 SSL)"]
+    
+    subgraph Routing["Application Routing"]
+        Proxy -- "Path: /" --> Frontend["React Frontend (Vite / Vercel)"]
+        Proxy -- "Path: /api/*" --> Backend["Spring Boot Backend (Render / Local)"]
+        Proxy -- "Path: /actuator/*" --> Metrics["Actuator & Prometheus Metrics"]
+        Proxy -- "Path: /grafana/*" --> Monitoring["Grafana Dashboard"]
+    end
+    
+    subgraph DDNS["Dynamic DNS Automation"]
+        Duck["DuckDNS Service"] -- "Keeps IP Synchronized" --> Domain
+    end
+```
+
+### 1. DuckDNS Setup:
+DuckDNS provides a free, perpetual subdomain (e.g. `https://securehome.duckdns.org`) pointing dynamically to your public IP.
+1. Sign in to [DuckDNS](https://www.duckdns.org) using GitHub or Google.
+2. Create your custom subdomain (e.g. `securehome`).
+3. Note your private **Token**.
+4. Run the automated updater using either:
+   - **Docker Container:** Included in `monitoring/docker-compose.yml` (configure `DUCKDNS_SUBDOMAINS` and `DUCKDNS_TOKEN` in `monitoring/duckdns/.env`).
+   - **Shell Script:** Execute `monitoring/duckdns/duckdns-updater.sh` on any Linux/macOS host or cron job.
+
+### 2. NGINX Reverse Proxy Configuration:
+The configuration in [monitoring/nginx/nginx.conf](file:///c:/Users/harsh/Downloads/DBMS123/monitoring/nginx/nginx.conf) routes requests under a unified domain:
+- `https://securehome.duckdns.org/` -> Forwards to React frontend.
+- `https://securehome.duckdns.org/api/` -> Forwards to Spring Boot API.
+- `https://securehome.duckdns.org/actuator/` -> Exposes health & Prometheus metrics.
+- Enforces HTTP to HTTPS redirection and modern TLS 1.2/1.3 encryption.
+
+### 3. Custom Domain on Render & Vercel:
+* **Frontend (Vercel):** Go to Project Settings > **Domains** > Add your custom domain (or CNAME record pointing `cname.vercel-dns.com`).
+* **Backend (Render):** Go to Web Service Settings > **Custom Domains** > Add your custom domain (e.g. `api.securehome.duckdns.org`) with the provided CNAME target.
+
+---
+
+## 9. Repository Structure
 
 ```text
 SecureHome/
@@ -304,12 +405,22 @@ SecureHome/
 │   └── workflows/
 │       └── ci-cd.yml          # GitHub Actions CI/CD Pipeline
 ├── .gitlab-ci.yml             # GitLab CI/CD Multi-Stage Pipeline
-├── home-security/             # Spring Boot Backend
+├── monitoring/                # Production Monitoring & Domain Stack
+│   ├── docker-compose.yml     # Prometheus + Grafana + DuckDNS containers
+│   ├── prometheus/
+│   │   └── prometheus.yml     # Prometheus scrape configuration
+│   ├── grafana/
+│   │   ├── provisioning/      # Automated datasource & dashboard loading
+│   │   └── dashboards/        # SecureHome pre-configured monitoring dashboard
+│   ├── duckdns/               # DuckDNS DDNS updater scripts & config
+│   └── nginx/
+│       └── nginx.conf         # Reverse proxy with SSL & custom domain routing
+├── home-security/             # Spring Boot Backend (Java 21)
 │   ├── src/
-│   │   ├── main/
-│   │   └── test/              # Integration & Unit Tests (application.properties)
+│   │   ├── main/              # REST APIs, SecurityConfig, Actuator
+│   │   └── test/              # Integration Tests & Test Properties
 │   ├── Dockerfile             # Multi-stage Docker packaging
-│   ├── pom.xml                # Maven project definition
+│   ├── pom.xml                # Maven project definition (Actuator + Prometheus)
 │   └── mvnw                   # Maven wrapper
 └── home-security-frontend/    # React Frontend
     ├── src/
@@ -321,11 +432,12 @@ SecureHome/
 
 The backend directory contains the Spring Boot application, while the frontend directory contains the React application.
 
-## 8. Conclusion
+## 10. Conclusion
 
-SecureHome provides a web-based approach to private room and smart locker security. By combining authentication, role-based authorization, permission management, access history, administrator-controlled security alerts, and robust CI/CD automation across GitHub Actions and GitLab CI/CD, the system ensures enterprise-grade security and reliable software delivery.
+SecureHome provides an enterprise-ready smart security system combining robust authentication, role-based authorization, smart locker management, automated CI/CD pipelines (GitHub Actions & GitLab CI/CD), full-stack monitoring (Prometheus & Grafana), and custom domain routing (DuckDNS & NGINX).
 
 **GitHub Repository:** https://github.com/Harshitharoyal-20/SecureHome
 
 **Live Application:** https://secure-home-kappa.vercel.app/
+
 

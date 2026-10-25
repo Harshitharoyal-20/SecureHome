@@ -194,7 +194,8 @@ public class SecurityConfig {
 
                 .requestMatchers(
                         "/", "/error", "/oauth2/**",
-                        "/login/**", "/api/auth/login")
+                        "/login/**", "/api/auth/login",
+                        "/actuator/**")
                 .permitAll()
 
                 .requestMatchers("/api/me")
