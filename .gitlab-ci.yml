@@ -1,0 +1,166 @@
+# SecureHome GitLab CI/CD Pipeline Configuration
+# Multi-stage automated pipeline for React frontend & Spring Boot backend
+
+stages:
+  - lint
+  - test
+  - build
+  - package
+  - deploy
+
+variables:
+  # Maven local repository cache path
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  # Docker in Docker settings
+  DOCKER_TLS_CERTDIR: ""
+  DOCKER_DRIVER: overlay2
+
+# Cache dependencies between pipeline executions
+cache:
+  key: "${CI_COMMIT_REF_SLUG}"
+  paths:
+    - .m2/repository/
+    - home-security-frontend/.npm/
+
+# =========================================================================
+# 1. LINT STAGE
+# =========================================================================
+frontend:lint:
+  stage: lint
+  image: node:20-alpine
+  before_script:
+    - cd home-security-frontend
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - npm run lint
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+
+# =========================================================================
+# 2. TEST STAGE
+# =========================================================================
+backend:test:
+  stage: test
+  image: eclipse-temurin:21-jdk-jammy
+  services:
+    - name: mysql:8.0
+      alias: mysql
+  variables:
+    MYSQL_ROOT_PASSWORD: rootpassword
+    MYSQL_DATABASE: home_security
+    MYSQL_USER: testuser
+    MYSQL_PASSWORD: testpassword
+    DB_URL: "jdbc:mysql://mysql:3306/home_security?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC"
+    DB_USERNAME: testuser
+    DB_PASSWORD: testpassword
+    GITHUB_CLIENT_ID: "gitlab-ci-dummy-client-id"
+    GITHUB_CLIENT_SECRET: "gitlab-ci-dummy-client-secret"
+  before_script:
+    - cd home-security
+    - chmod +x mvnw
+  script:
+    - ./mvnw clean test
+  artifacts:
+    when: always
+    reports:
+      junit: home-security/target/surefire-reports/*.xml
+    paths:
+      - home-security/target/surefire-reports/
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+
+# =========================================================================
+# 3. BUILD STAGE
+# =========================================================================
+frontend:build:
+  stage: build
+  image: node:20-alpine
+  before_script:
+    - cd home-security-frontend
+    - npm ci --cache .npm --prefer-offline
+  script:
+    - npm run build
+  artifacts:
+    name: "securehome-frontend-dist-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - home-security-frontend/dist/
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+
+backend:build:
+  stage: build
+  image: eclipse-temurin:21-jdk-jammy
+  before_script:
+    - cd home-security
+    - chmod +x mvnw
+  script:
+    - ./mvnw clean package -DskipTests
+  artifacts:
+    name: "securehome-backend-jar-${CI_COMMIT_SHORT_SHA}"
+    paths:
+      - home-security/target/*.jar
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+
+# =========================================================================
+# 4. PACKAGE STAGE (Docker Build Verification)
+# =========================================================================
+backend:docker-verify:
+  stage: package
+  image: docker:27
+  services:
+    - docker:27-dind
+  script:
+    - docker build -t securehome-backend:${CI_COMMIT_SHORT_SHA} ./home-security
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "dev"'
+
+# =========================================================================
+# 5. DEPLOY STAGE (Automated Deployment Triggers for Production)
+# =========================================================================
+deploy:backend-render:
+  stage: deploy
+  image: curlimages/curl:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - |
+      if [ -n "$RENDER_DEPLOY_HOOK_URL" ]; then
+        echo "Triggering Render backend deployment hook..."
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+        echo "Render webhook response code: $HTTP_CODE"
+        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+          echo "Render deployment triggered successfully."
+        else
+          echo "Render deploy hook returned warning status: $HTTP_CODE"
+        fi
+      else
+        echo "RENDER_DEPLOY_HOOK_URL variable not defined in GitLab CI/CD Variables. Skipping Render deploy."
+      fi
+
+deploy:frontend-vercel:
+  stage: deploy
+  image: curlimages/curl:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - |
+      if [ -n "$VERCEL_DEPLOY_HOOK_URL" ]; then
+        echo "Triggering Vercel frontend deployment hook..."
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$VERCEL_DEPLOY_HOOK_URL")
+        echo "Vercel webhook response code: $HTTP_CODE"
+        if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+          echo "Vercel deployment triggered successfully."
+        else
+          echo "Vercel deploy hook returned warning status: $HTTP_CODE"
+        fi
+      else
+        echo "VERCEL_DEPLOY_HOOK_URL variable not defined in GitLab CI/CD Variables. Skipping Vercel deploy."
+      fi

@@ -1,0 +1,191 @@
+name: SecureHome CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # =========================================================================
+  # 1. FRONTEND CI: Lint, Build, and Artifact Generation (React / Vite)
+  # =========================================================================
+  frontend-ci:
+    name: Frontend Quality & Build (React / Vite)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: 'home-security-frontend/package-lock.json'
+
+      - name: Install Dependencies
+        working-directory: ./home-security-frontend
+        run: npm ci
+
+      - name: Lint Frontend Code
+        working-directory: ./home-security-frontend
+        run: npm run lint
+
+      - name: Build Production Assets
+        working-directory: ./home-security-frontend
+        run: npm run build
+
+      - name: Archive Frontend Production Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: home-security-frontend/dist/
+          retention-days: 7
+
+  # =========================================================================
+  # 2. BACKEND CI: Test & Build with MySQL Service Container (Spring Boot)
+  # =========================================================================
+  backend-ci:
+    name: Backend Test & Build (Spring Boot / Java 21)
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpassword
+          MYSQL_DATABASE: home_security
+          MYSQL_USER: testuser
+          MYSQL_PASSWORD: testpassword
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21 (Temurin JDK)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Make Maven Wrapper Executable
+        run: chmod +x home-security/mvnw
+
+      - name: Run Backend Tests with MySQL Service Container
+        working-directory: ./home-security
+        env:
+          DB_URL: jdbc:mysql://127.0.0.1:3306/home_security?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC
+          DB_USERNAME: testuser
+          DB_PASSWORD: testpassword
+          GITHUB_CLIENT_ID: dummy-github-client-id
+          GITHUB_CLIENT_SECRET: dummy-github-client-secret
+        run: ./mvnw clean test
+
+      - name: Package Backend Application JAR
+        working-directory: ./home-security
+        run: ./mvnw package -DskipTests
+
+      - name: Archive Backend Executable JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jar
+          path: home-security/target/*.jar
+          retention-days: 7
+
+  # =========================================================================
+  # 3. DOCKER VERIFICATION: Multi-Stage Container Image Build
+  # =========================================================================
+  docker-verify:
+    name: Verify Backend Docker Build
+    needs: backend-ci
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker Image
+        run: |
+          docker build \
+            --file ./home-security/Dockerfile \
+            --tag securehome-backend:${{ github.sha }} \
+            ./home-security
+
+  # =========================================================================
+  # 4. DEPLOY BACKEND: Render Automated Webhook Deployment
+  # =========================================================================
+  deploy-backend:
+    name: Deploy Backend to Render
+    needs: [backend-ci, docker-verify]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Trigger Render Deploy Hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -n "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "Triggering Render deployment webhook..."
+            HTTP_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+            STATUS_CODE=$(echo "$HTTP_RESPONSE" | grep "HTTP_STATUS" | cut -d':' -f2)
+            echo "Render response status: $STATUS_CODE"
+            if [ "$STATUS_CODE" -ge 200 ] && [ "$STATUS_CODE" -lt 300 ]; then
+              echo "Backend deployment triggered successfully on Render."
+            else
+              echo "Warning: Deploy hook responded with status $STATUS_CODE"
+            fi
+          else
+            echo "RENDER_DEPLOY_HOOK_URL secret is not configured. Skipping automated Render deployment."
+            echo "To enable automated deployments, configure RENDER_DEPLOY_HOOK_URL in repository Secrets."
+          fi
+
+  # =========================================================================
+  # 5. DEPLOY FRONTEND: Vercel Automated Webhook Deployment
+  # =========================================================================
+  deploy-frontend:
+    name: Deploy Frontend to Vercel
+    needs: frontend-ci
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Trigger Vercel Deploy Hook
+        env:
+          VERCEL_DEPLOY_HOOK_URL: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -n "$VERCEL_DEPLOY_HOOK_URL" ]; then
+            echo "Triggering Vercel deployment webhook..."
+            HTTP_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST "$VERCEL_DEPLOY_HOOK_URL")
+            STATUS_CODE=$(echo "$HTTP_RESPONSE" | grep "HTTP_STATUS" | cut -d':' -f2)
+            echo "Vercel response status: $STATUS_CODE"
+            if [ "$STATUS_CODE" -ge 200 ] && [ "$STATUS_CODE" -lt 300 ]; then
+              echo "Frontend deployment triggered successfully on Vercel."
+            else
+              echo "Warning: Deploy hook responded with status $STATUS_CODE"
+            fi
+          else
+            echo "VERCEL_DEPLOY_HOOK_URL secret is not configured. Skipping automated Vercel deployment."
+            echo "To enable automated deployments, configure VERCEL_DEPLOY_HOOK_URL in repository Secrets."
+          fi
